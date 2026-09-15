@@ -12,7 +12,10 @@
 Schema additions over doc 3 §11 (needed to reopen evidence and to record FR-01/FR-02
 transparency): `evidence.source_path/source_format/members_json/gaps_json`,
 `identification.status/selection/probe_plan_json/observations_json/errors_json`,
-`recording.stream/frame_count/notes_json`, `artifact.size_bytes/source_record_seq`.
+`recording.stream/frame_count/notes_json`, `artifact.size_bytes/source_record_seq`,
+and the `time_observation` table (FR-51: the offset evidence behind every
+`recording.t_ref_*` value — the report must show *how* an offset was measured, not just
+its result).
 """
 
 from __future__ import annotations
@@ -86,6 +89,12 @@ CREATE TABLE artifact (
 CREATE TABLE coverage (
   evidence_id TEXT, offset INTEGER, length INTEGER,
   bucket TEXT CHECK (bucket IN ('parsed','carved','structural','unreadable','unaccounted'))
+);
+CREATE TABLE time_observation (
+  id TEXT PRIMARY KEY, evidence_id TEXT REFERENCES evidence,
+  method TEXT CHECK (method IN ('A_ntp','B_reference_capture','C_external_event','D_live_rtc')),
+  device_local TEXT, true_utc TEXT, uncertainty_s REAL,
+  tz_offset_s INTEGER, valid_from TEXT, valid_to TEXT, note TEXT
 );
 CREATE TABLE device_event (
   evidence_id TEXT, t_device TEXT, t_ref TEXT, kind TEXT, detail TEXT

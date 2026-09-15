@@ -23,6 +23,7 @@ from spectra.services import evidence as evidence_service
 from spectra.services import export as export_service
 from spectra.services import identify as identify_service
 from spectra.services import parse as parse_service
+from spectra.services import timeline as timeline_service
 
 app = typer.Typer(no_args_is_help=True, add_completion=False,
                   help="SPECTRA — vendor-agnostic DVR/NVR forensic analysis (offline).")
@@ -32,7 +33,10 @@ identify_app = typer.Typer(help="Identify the format family of an evidence item.
 list_app = typer.Typer(no_args_is_help=True, help="List case contents.")
 export_app = typer.Typer(no_args_is_help=True, help="Export evidence clips.")
 verify_app = typer.Typer(no_args_is_help=True, help="Third-party verification commands.")
+time_app = typer.Typer(no_args_is_help=True,
+                       help="Clock-offset evidence and time normalisation (FR-50..FR-53).")
 app.add_typer(case_app, name="case")
+app.add_typer(time_app, name="time")
 app.add_typer(import_app, name="import")
 app.add_typer(identify_app, name="identify")
 app.add_typer(list_app, name="list")
@@ -331,6 +335,120 @@ def export_clip(
         typer.echo(f"  MP4  not produced: {result.mp4_skipped_reason}")
     for path in result.copied_to:
         typer.echo(f"  wrote {path}")
+
+
+# -- time & timeline --------------------------------------------------------------------------
+
+@time_app.command("set")
+def time_set(
+    method: Annotated[str, typer.Option("--method", help="A|B|C|D (FR-51).")],
+    device_time: Annotated[str, typer.Option("--device-time", help="Device wall-clock reading, "
+                                             "naive ISO, e.g. 2026-03-05T14:22:00.")],
+    true_time: Annotated[str, typer.Option("--true-time", help="True time WITH timezone, "
+                                           "e.g. 2026-03-05T14:04:18Z.")],
+    uncertainty: Annotated[float | None, typer.Option("--uncertainty",
+                                                      help="± seconds (method floor if omitted; "
+                                                      "method C defaults to ±60).")] = None,
+    tz_offset_minutes: Annotated[int | None, typer.Option("--tz-offset-minutes",
+                                                          help="Device timezone, e.g. 330 for "
+                                                          "+05:30, when known.")] = None,
+    valid_from: Annotated[str | None, typer.Option("--valid-from", help="Device-local start of "
+                                                   "the range this offset covers.")] = None,
+    valid_to: Annotated[str | None, typer.Option("--valid-to", help="Device-local end of the "
+                                                 "range this offset covers.")] = None,
+    note: Annotated[str, typer.Option("--note", help="How the reading was made (audited, "
+                                      "printed in the report).")] = "",
+    evidence: EvidenceOpt = None,
+    case: CaseOpt = None,
+) -> None:
+    """Record one clock-offset observation and renormalise the evidence item (audited)."""
+    methods = {"A": "A_ntp", "B": "B_reference_capture", "C": "C_external_event",
+               "D": "D_live_rtc"}
+    resolved = methods.get(method.upper(), method)
+    if resolved not in methods.values():
+        raise typer.BadParameter(f"--method must be one of {'|'.join(methods)} (FR-51)")
+    with _open(case) as store:
+        evidence_id = evidence_service.default_evidence_id(store, evidence)
+        summary = timeline_service.set_offset(
+            store, evidence_id, resolved, device_time, true_time, uncertainty,
+            tz_offset_minutes * 60 if tz_offset_minutes is not None else None,
+            valid_from, valid_to, note,
+        )
+    typer.echo(f"{summary.evidence_id}: recorded {summary.observation_id}")
+    typer.echo(f"  {summary.offset_note}")
+    typer.echo(f"  recordings normalised: {summary.recordings_normalised}  "
+               f"still device-local: {summary.recordings_refused}")
+
+
+@time_app.command("show")
+def time_show(evidence: EvidenceOpt = None, case: CaseOpt = None,
+              as_json: JsonOpt = False) -> None:
+    """Show the offset observations and the clock model they establish (FR-50)."""
+    with _open(case) as store:
+        evidence_id = evidence_service.default_evidence_id(store, evidence)
+        data = timeline_service.show(store, evidence_id)
+    if as_json:
+        _emit_json(data)
+        return
+    typer.echo(f"{data['evidence_id']}: {len(data['observations'])} observation(s)")
+    for obs in data["observations"]:
+        typer.echo(f"  {obs['id']}  {obs['method']}  device {obs['device_local']} vs true "
+                   f"{obs['true_utc']}  ±{obs['uncertainty_s']:g} s  {obs['note'] or ''}")
+    for segment in data["segments"]:
+        span = f"{segment['valid_from'] or '…'} → {segment['valid_to'] or '…'}"
+        typer.echo(f"  segment {span}: {segment['note']}")
+    if not data["segments"]:
+        typer.echo("  no offset established: all times are device-local (FR-53)")
+
+
+@app.command("timeline")
+def timeline_cmd(evidence: EvidenceOpt = None, case: CaseOpt = None,
+                 as_json: JsonOpt = False) -> None:
+    """Multi-channel, multi-device timeline on the reference axis (FR-57 data, FR-60)."""
+    with _open(case) as store:
+        data = timeline_service.timeline_data(store, evidence)
+    if as_json:
+        _emit_json(data)
+        return
+    for lane in data["lanes"]:
+        typer.echo(f"{lane['label']}")
+        for segment in lane["segments"]:
+            typer.echo(f"  {segment['start']} → {segment['end']}  "
+                       f"±{segment['uncertainty_s']:g} s  {segment['recording_id']}")
+    if data["unplaced"]:
+        typer.echo("not on the reference axis (FR-53):")
+        for item in data["unplaced"]:
+            typer.echo(f"  {item['recording_id']}  ch {item['channel']}  — {item['reason']}")
+    if not data["lanes"] and not data["unplaced"]:
+        typer.echo("no recordings")
+
+
+@app.command("gaps")
+def gaps_cmd(
+    evidence: EvidenceOpt = None,
+    min_gap: Annotated[float, typer.Option("--min-gap", help="Smallest gap to report, "
+                                           "seconds.")] = 1.0,
+    case: CaseOpt = None,
+    as_json: JsonOpt = False,
+) -> None:
+    """Report no-recording windows per channel, and synchronised across channels (FR-58)."""
+    with _open(case) as store:
+        data = timeline_service.gap_report(store, evidence, min_gap)
+    if as_json:
+        _emit_json(data)
+        return
+    for entry in data["evidence"]:
+        basis = entry["basis"]
+        banner = f"  [{entry['banner']}]" if entry.get("banner") else ""
+        typer.echo(f"{entry['evidence_id']} ({basis} time){banner}")
+        for gap in entry["channel_gaps"]:
+            typer.echo(f"  ch {gap['channel']}: {gap['start']} → {gap['end']}  "
+                       f"{gap['duration_s']:.0f} s  ±{gap['uncertainty_s']:g} s")
+        for gap in entry["synchronised_gaps"]:
+            typer.echo(f"  ALL CHANNELS: {gap['start']} → {gap['end']}  "
+                       f"{gap['duration_s']:.0f} s — synchronised absence is a finding")
+        if not entry["channel_gaps"] and not entry["synchronised_gaps"]:
+            typer.echo(f"  no gaps ≥ {data['min_gap_s']:g} s")
 
 
 # -- third-party verification ---------------------------------------------------------------
