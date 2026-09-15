@@ -1,7 +1,7 @@
 # 06 — Validation & Test Plan
 
 **Named deliverable** of the problem statement.
-**Purpose:** establish, in advance and in writing, how SENTINEL is proven correct — so
+**Purpose:** establish, in advance and in writing, how SPECTRA is proven correct — so
 that an examiner asked *"has your tool been tested, and how do you know it works?"* has
 a signed document to hand over instead of an opinion.
 **Method basis:** NIST CFTT-style methodology (documented requirements → test
@@ -298,7 +298,7 @@ any confident-wrong-answer failure at any priority, blocks release.**
 The signed artefact produced by executing this plan.
 
 ```
-SENTINEL VALIDATION REPORT
+SPECTRA VALIDATION REPORT
 Tool version: ____________   Build hash: ____________   Date: ____________
 Test owner: ____________     Reviewed by: ____________
 

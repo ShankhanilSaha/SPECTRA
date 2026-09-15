@@ -1,6 +1,6 @@
-# SENTINEL — Unified Vendor-Agnostic DVR/NVR Forensic Analysis Platform
+# SPECTRA — Unified Vendor-Agnostic DVR/NVR Forensic Analysis Platform
 
-**Surveillance Evidence Normalisation, Timeline, Integrity & Extraction Layer**
+**Surveillance Platform for Evidence Carving, Timeline Reconstruction & Analysis**
 
 SIH 2026 · Problem Statement: *Unified vendor-agnostic DVR/NVR forensic analysis platform* · Organisation: NTRO
 
@@ -13,7 +13,7 @@ investigations and the single least standardised. Every DVR/NVR OEM writes its o
 filesystem directly to raw disk, wraps H.264/H.265 in its own container, and keeps
 its own clock. Investigators today run three to five vendor tools per case, hand-copy
 timestamps, and lose recoverable footage because no tool carves the *unlinked* index
-entries that a circular-overwrite recorder leaves behind. SENTINEL is one tool that
+entries that a circular-overwrite recorder leaves behind. SPECTRA is one tool that
 identifies the recorder from the disk itself, images it forensically, parses the
 proprietary filesystem through a plugin per vendor, decodes the proprietary frame
 container to standard MP4, carves deleted and overwritten-adjacent footage, normalises
@@ -41,10 +41,10 @@ emits a court-ready report with an unbroken chain of custody.
 ## Repository layout (target)
 
 ```
-NTRO/
+SPECTRA/
 ├── README.md
 ├── docs/                    # this documentation set
-├── sentinel/
+├── spectra/
 │   ├── core/                # case DB, hashing, chain of custody, audit log
 │   ├── identify/            # signature scanner, device fingerprinting
 │   ├── acquire/             # imaging (raw/E01/AFF4), write-block verification

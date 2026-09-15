@@ -1,6 +1,6 @@
 # 02 — Product Requirements Document
 
-**Product:** SENTINEL — Unified Vendor-Agnostic DVR/NVR Forensic Analysis Platform
+**Product:** SPECTRA — Unified Vendor-Agnostic DVR/NVR Forensic Analysis Platform
 **Version:** 1.0 (baseline)
 **Owner:** SIH 2026 team · NTRO problem statement
 **Depends on:** [doc 1 — Problem Analysis](01-problem-analysis.md)
@@ -9,7 +9,7 @@
 
 ## 1. Product summary
 
-SENTINEL is an offline desktop forensic platform that takes a seized DVR/NVR hard disk
+SPECTRA is an offline desktop forensic platform that takes a seized DVR/NVR hard disk
 (or an image of one, or a vendor export) and produces court-admissible surveillance
 evidence: identified device, forensic image, parsed recordings, recovered deleted
 footage, time-normalised multi-camera timeline, offline AI-assisted leads, and a
@@ -86,9 +86,9 @@ hashes.
 ### UJ1 — Seizure to first clip (the headline journey)
 1. Officer (P1) follows the seizure SOP, performs the reference-clock capture, records
    the seizure video, fills the form, seals the device.
-2. Examiner (P2) creates a case in SENTINEL, enters authority and evidence metadata,
+2. Examiner (P2) creates a case in SPECTRA, enters authority and evidence metadata,
    attaches and hashes the seizure memo and video.
-3. Examiner attaches the disk through a hardware write blocker. SENTINEL verifies
+3. Examiner attaches the disk through a hardware write blocker. SPECTRA verifies
    write-blocking, detects HPA/DCO, and reports drive identity.
 4. **Device Identification** scans signatures, reports `Dahua-family, format v3,
    confidence 0.97`, and shows the raw bytes it matched on.

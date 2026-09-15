@@ -1,7 +1,7 @@
 # 07 — User Manual
 
 **Named deliverable** of the problem statement.
-**Product:** SENTINEL v1.0
+**Product:** SPECTRA v1.0
 **Audience:** Forensic examiners and investigating officers.
 **Companion:** always follow [doc 5 — SOPs](05-sop.md). This manual tells you how to
 operate the tool; the SOP tells you what a defensible examination requires.
@@ -10,14 +10,14 @@ operate the tool; the SOP tells you what a defensible examination requires.
 
 ## 1. Before you start
 
-### 1.1 What SENTINEL does
+### 1.1 What SPECTRA does
 
 Takes a DVR/NVR hard disk, a forensic image of one, or vendor export files, and
 produces: identified device, forensic image, extracted recordings, recovered deleted
 footage, a time-normalised multi-camera timeline, AI-assisted review leads, and a
 signed, court-ready report with a verifiable chain of custody.
 
-### 1.2 What SENTINEL will not do
+### 1.2 What SPECTRA will not do
 
 - It will not write to your evidence. Ever. There is no option to.
 - It will not invent a timestamp it cannot establish.
@@ -47,12 +47,12 @@ evidence is provenance class B instead of A, and the report will say so.
 
 ```bash
 # From the offline bundle (for air-gapped lab machines)
-tar xzf sentinel-1.0.0-linux-x86_64.tar.gz
-cd sentinel-1.0.0
-sudo ./install.sh            # installs to /opt/sentinel, adds /usr/local/bin/sentinel
+tar xzf spectra-1.0.0-linux-x86_64.tar.gz
+cd spectra-1.0.0
+sudo ./install.sh            # installs to /opt/spectra, adds /usr/local/bin/spectra
 
-sentinel --version
-sentinel selftest            # verifies bundled FFmpeg, libewf, models, and their hashes
+spectra --version
+spectra selftest             # verifies bundled FFmpeg, libewf, models, and their hashes
 ```
 
 `selftest` checks the hash of every bundled component against the manifest. **Run it
@@ -62,20 +62,20 @@ recording in your reports is untrustworthy — stop and reinstall.
 Raw device access needs elevation:
 
 ```bash
-sudo sentinel acquire --device /dev/sdb ...
+sudo spectra acquire --device /dev/sdb ...
 ```
 
 The process drops privileges immediately after opening the device handle.
 
 ### 2.2 Windows
 
-Run `sentinel-1.0.0-setup.exe` as Administrator. Launch **SENTINEL** from the Start
-menu, or use `sentinel.exe` from an elevated PowerShell for CLI work.
+Run `spectra-1.0.0-setup.exe` as Administrator. Launch **SPECTRA** from the Start
+menu, or use `spectra.exe` from an elevated PowerShell for CLI work.
 
 ### 2.3 Verifying your download
 
 ```bash
-sha256sum sentinel-1.0.0-linux-x86_64.tar.gz
+sha256sum spectra-1.0.0-linux-x86_64.tar.gz
 # compare against the published SHA256SUMS file
 ```
 
@@ -90,7 +90,7 @@ and prevents most user errors.
 
 The parser is chosen by what is **on the disk**, not by the badge on the front. A CP
 Plus recorder normally contains a Dahua-family disk. A Godrej unit may be either family
-depending on the SKU. SENTINEL shows you both: the format family it detected, and the
+depending on the SKU. SPECTRA shows you both: the format family it detected, and the
 brand it inferred (and from what evidence).
 
 **Never override the detected family based on the chassis label.** If they disagree,
@@ -131,7 +131,7 @@ Every recording in the UI is badged with its tier and a confidence score.
 | `t_reference` | **Normalised UTC.** The only time used for correlation. Always carries an uncertainty and a derivation method. |
 
 **`t_reference` can legitimately be "not established".** If you have no way to measure
-the clock offset, SENTINEL shows device-local time with a warning banner and refuses to
+the clock offset, SPECTRA shows device-local time with a warning banner and refuses to
 assert absolute times. This is correct behaviour — do not work around it by entering a
 guessed offset.
 
@@ -183,7 +183,7 @@ bench, and F-1 carries the reference-clock capture data you will need in Step 6.
 #### Acquiring from a disk
 
 1. Attach the disk through a write blocker, then to the workstation.
-2. SENTINEL lists detected devices. Select yours — **check the serial number against
+2. SPECTRA lists detected devices. Select yours — **check the serial number against
    Form F-3** before proceeding.
 3. Pre-flight runs automatically and shows:
    - Write protection: **verified / NOT VERIFIED**
@@ -252,7 +252,7 @@ Reading the result:
      ±1 s.
    - **B — Reference-clock capture** (the usual best case). From Form F-1: enter the
      true time of the capture, then scrub to the capture in the footage and mark the
-     frame where the reference clock is legible. SENTINEL computes the offset. ±1 s.
+     frame where the reference clock is legible. SPECTRA computes the offset. ±1 s.
    - **C — External timestamped event.** An access-control swipe, POS transaction, or
      call visible in frame with an independent record. ±2–60 s.
    - **D — Live RTC read.** The device's displayed time noted against true time before
@@ -260,7 +260,7 @@ Reading the result:
    - **None available.** Select this. The tool will show device-local time only and
      will not assert absolute time anywhere.
 
-3. If the device event log shows a **manual clock change**, SENTINEL prompts you to
+3. If the device event log shows a **manual clock change**, SPECTRA prompts you to
    define offsets per segment. Do it — a single offset across a clock change is wrong
    for half the timeline.
 
@@ -356,41 +356,41 @@ Everything in the GUI is available headless. Use the CLI for batch work, scripti
 reproducible validation runs.
 
 ```bash
-sentinel <command> [options]
+spectra <command> [options]
 ```
 
 ### Case
 
 ```bash
-sentinel case new --id CASE-2026-0142 --title "Market Rd CCTV" \
+spectra case new --id CASE-2026-0142 --title "Market Rd CCTV" \
     --agency "District Cyber Cell" --fir "FIR 145/2026" \
     --examiner "Name" --designation "SI" --s79a "REF/2024/xx" \
     --dir /cases/CASE-2026-0142
 
-sentinel case open   /cases/CASE-2026-0142
-sentinel case info
-sentinel case attach --file seizure_memo.pdf --kind document
-sentinel case custody --from "SI Kumar" --to "Lab Store" --purpose "storage"
-sentinel case verify        # verifies the audit chain and all artefact hashes
+spectra case open   /cases/CASE-2026-0142
+spectra case info
+spectra case attach --file seizure_memo.pdf --kind document
+spectra case custody --from "SI Kumar" --to "Lab Store" --purpose "storage"
+spectra case verify        # verifies the audit chain and all artefact hashes
 ```
 
 ### Acquisition
 
 ```bash
-sentinel devices                       # list attached disks
+spectra devices                       # list attached disks
 
-sentinel acquire --device /dev/sdb --format e01 \
+spectra acquire --device /dev/sdb --format e01 \
     --out /images/case142_disk1.E01 \
     --blocker "Tableau T35u fw 1.2" \
     [--allow-no-blocker --justification "..."]   # downgrades to class B, audited
 
-sentinel acquire --resume /images/case142_disk1.E01
+spectra acquire --resume /images/case142_disk1.E01
 
-sentinel import image  --file /images/existing.E01
-sentinel import files  --dir  /media/usb/exports    # class D
-sentinel import firmware --file /dumps/spi.bin
+spectra import image  --file /images/existing.E01
+spectra import files  --dir  /media/usb/exports    # class D
+spectra import firmware --file /dumps/spi.bin
 
-sentinel acquire live --host 192.168.1.64 --user admin \
+spectra acquire live --host 192.168.1.64 --user admin \
     --channels 1,3,5 --from "2026-03-01T00:00:00+05:30" \
     --to "2026-03-01T06:00:00+05:30"              # class C
 ```
@@ -398,73 +398,73 @@ sentinel acquire live --host 192.168.1.64 --user admin \
 ### Identification and parsing
 
 ```bash
-sentinel identify --evidence EV-001 [--json]
-sentinel identify dossier --evidence EV-001 --out dossier.html   # unknown formats
+spectra identify --evidence EV-001 [--json]
+spectra identify dossier --evidence EV-001 --out dossier.html   # unknown formats
 
-sentinel parse --evidence EV-001
-sentinel coverage --evidence EV-001            # the coverage map
-sentinel events --evidence EV-001              # device system log
-sentinel list recordings --evidence EV-001 --channel 3 \
+spectra parse --evidence EV-001
+spectra coverage --evidence EV-001            # the coverage map
+spectra events --evidence EV-001              # device system log
+spectra list recordings --evidence EV-001 --channel 3 \
     --from 2026-03-01 --to 2026-03-02 [--tier T1,T2]
 ```
 
 ### Recovery
 
 ```bash
-sentinel recover --evidence EV-001 --tiers T2,T3
-sentinel recover --evidence EV-001 --tiers T3 --resume
-sentinel recover --evidence EV-001 --tiers T4     # after read errors
+spectra recover --evidence EV-001 --tiers T2,T3
+spectra recover --evidence EV-001 --tiers T3 --resume
+spectra recover --evidence EV-001 --tiers T4     # after read errors
 ```
 
 ### Time
 
 ```bash
-sentinel time set --evidence EV-001 --tz +05:30 \
+spectra time set --evidence EV-001 --tz +05:30 \
     --method B --true-time "2026-03-05T14:32:10+05:30" \
     --marked-frame REC-0912:4471 \
     --note "Reference clock capture per Form F-1, channel 2"
 
-sentinel time set --evidence EV-001 --tz +05:30 --method none
-sentinel time show --evidence EV-001
+spectra time set --evidence EV-001 --tz +05:30 --method none
+spectra time show --evidence EV-001
 ```
 
 ### Timeline and export
 
 ```bash
-sentinel timeline --from "2026-03-05T14:00" --to "2026-03-05T16:00" \
+spectra timeline --from "2026-03-05T14:00" --to "2026-03-05T16:00" \
     --channels 1,2,3,5 [--out timeline.svg]
-sentinel gaps --evidence EV-001                 # gap analysis
+spectra gaps --evidence EV-001                 # gap analysis
 
-sentinel export clip --recording REC-0912 --out /out/ [--derivative]
-sentinel export range --channel 3 --from "..." --to "..." --out /out/
-sentinel export manifest --out /out/manifest.json
+spectra export clip --recording REC-0912 --out /out/ [--derivative]
+spectra export range --channel 3 --from "..." --to "..." --out /out/
+spectra export manifest --out /out/manifest.json
 ```
 
 ### Analytics
 
 ```bash
-sentinel analyze motion  --channels 1,2,3 --from "..." --to "..."
-sentinel analyze objects --classes person,vehicle --min-score 0.5
-sentinel analyze faces   --cluster
-sentinel analyze anpr
-sentinel annotations list --channel 3 [--source object]
+spectra analyze motion  --channels 1,2,3 --from "..." --to "..."
+spectra analyze objects --classes person,vehicle --min-score 0.5
+spectra analyze faces   --cluster
+spectra analyze anpr
+spectra annotations list --channel 3 [--source object]
 ```
 
 ### Reporting
 
 ```bash
-sentinel report generate --out /out/report.pdf [--template agency_x]
-sentinel report findings --out /out/findings.json
-sentinel report certificate --out /out/bsa_63_4.pdf
-sentinel report sign --examiner "Name"
+spectra report generate --out /out/report.pdf [--template agency_x]
+spectra report findings --out /out/findings.json
+spectra report certificate --out /out/bsa_63_4.pdf
+spectra report sign --examiner "Name"
 ```
 
 ### Verification (for a third party)
 
 ```bash
-sentinel verify chain    --case /cases/CASE-2026-0142
-sentinel verify hashes   --manifest /out/manifest.json
-sentinel verify artifact --file clip.mp4 --manifest /out/manifest.json
+spectra verify chain    --case /cases/CASE-2026-0142
+spectra verify hashes   --manifest /out/manifest.json
+spectra verify artifact --file clip.mp4 --manifest /out/manifest.json
 ```
 
 These three commands are what the report's §11 tells a defence expert to run. They work
@@ -496,7 +496,7 @@ on a machine that has never seen the case before.
 
 ## 7. FAQ
 
-**Can SENTINEL modify my evidence?**
+**Can SPECTRA modify my evidence?**
 No. There is no write path to evidence in the code, the OS handle is read-only, and the
 validation suite proves zero write syscalls against evidence paths across a full
 workflow (doc 6, TC-AQ-03).
@@ -520,7 +520,7 @@ explicitly isolated from networking.
 
 **How do I prove to a court that the exported clip is unaltered?**
 The report's §11 gives the hash table and the exact commands. A third party runs
-`sentinel verify` (or plain `sha256sum`) against the manifest. The video payload in the
+`spectra verify` (or plain `sha256sum`) against the manifest. The video payload in the
 evidence copy is bit-identical to what was on the disk, and the extracted-ES hash proves
 it independently of the container.
 
@@ -542,6 +542,6 @@ report header. If neither differs, report it as a bug.
   image size and format family, and the relevant audit-log excerpt.
   **Never attach case data.**
 - **New vendor support:** send the signature dossier
-  (`sentinel identify dossier`) — it contains structural bytes, not video.
+  (`spectra identify dossier`) — it contains structural bytes, not video.
 - **Format documentation:** [doc 4](04-oem-comparative-analysis.md), including the
   reverse-engineering procedure in §11.

@@ -1,6 +1,6 @@
 # 03 — System Architecture
 
-**Product:** SENTINEL
+**Product:** SPECTRA
 **Version:** 1.0 (baseline)
 **Depends on:** [doc 1 — Problem Analysis](01-problem-analysis.md), [doc 2 — PRD](02-prd.md)
 
@@ -25,13 +25,13 @@ Five constraints determine every structural decision. Everything below follows f
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │  PRESENTATION                                                                │
-│   sentinel.ui (PySide6 desktop)          sentinel.cli (Typer)                 │
+│   spectra.ui (PySide6 desktop)           spectra.cli (Typer)                  │
 │   case wizard · timeline · player ·      scriptable, same operations,         │
 │   review · report preview                headless, for batch/lab automation   │
 └─────────────────────────────────┬────────────────────────────────────────────┘
                                   │  both call the same service API. No logic in the UI.
 ┌─────────────────────────────────▼────────────────────────────────────────────┐
-│  SERVICES  (sentinel.services)                                               │
+│  SERVICES  (spectra.services)                                                │
 │   CaseService · IdentifyService · AcquireService · ParseService ·             │
 │   RecoverService · TimelineService · AnalyticsService · ReportService         │
 │   ── each is a thin orchestrator: validate → audit → run job → audit ──       │
@@ -53,7 +53,7 @@ Five constraints determine every structural decision. Everything below follows f
 └─────────────────────────────────┬────────────────────────────────────────────┘
                                   │
 ┌─────────────────────────────────▼────────────────────────────────────────────┐
-│  FOUNDATION  (sentinel.core)                                                 │
+│  FOUNDATION  (spectra.core)                                                  │
 │   EvidenceSource (read-only I/O, D1)  ·  Hasher (dual MD5/SHA-256)  ·         │
 │   AuditChain (D3)  ·  CaseStore (SQLite + CAS)  ·  JobRunner (checkpointed)  ·│
 │   MediaTool (pinned FFmpeg wrapper)  ·  Provenance                            │
@@ -827,7 +827,7 @@ coverage map, the hash chain, and mandatory negative findings.
 ## 15. Directory structure
 
 ```
-sentinel/
+spectra/
 ├── core/
 │   ├── source.py        # EvidenceSource + implementations (D1)
 │   ├── hashing.py       # Hasher

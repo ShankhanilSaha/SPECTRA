@@ -15,7 +15,7 @@ The problem statement names eight deliverables. Mapping, with honest status:
 | 1 | Comparative analysis of major DVR/NVR OEMs | [doc 4](04-oem-comparative-analysis.md) | ✅ Written. Confidence-labelled; §12 tracks what still needs hardware verification. |
 | 2 | DVR/NVR forensic image | Tier S synthetic corpus + Tier R real images ([doc 6 §3](06-validation-plan.md)) | ⏳ Synthetic generator is buildable now; real images gated on hardware |
 | 3 | System architecture documentation | [doc 3](03-architecture.md) | ✅ Written |
-| 4 | Functional prototype | `sentinel/` — see §2 build order | ⏳ Build |
+| 4 | Functional prototype | `spectra/` — see §2 build order | ⏳ Build |
 | 5 | Standard Operating Procedures | [doc 5](05-sop.md), with Forms F-1/F-2/F-3 | ✅ Written |
 | 6 | Validation reports | [doc 6](06-validation-plan.md) — plan + report template | ✅ Plan written; report produced by executing it |
 | 7 | User manuals | [doc 7](07-user-manual.md) | ✅ Written |
@@ -96,20 +96,75 @@ Phase 0–1. This is the single most effective de-risking action against R1 (no 
 
 ---
 
-## 3. Team split (5–6 people)
+## 3. Team split (6 people)
 
-| Role | Owns | Phases |
+Six work sections, P1–P6, each owning directories from the target layout (README) and
+phases from §2. Owners are recorded in `CLAUDE.md` §7. Doc 2 also uses P1–P5 for personas
+and P0–P2 for requirement priority; in this section, P1–P6 always means a work section.
+
+The work is staged across the SIH rounds. **Pre-selection** builds the demo-visible
+pipeline (identify → parse → recover → time) on top of a real, minimal Phase 0.
+**Finals** completes the court-ready layers (Phase 2 physical acquisition, Phase 7 full
+report), then analytics and breadth. Deferring Phases 2 and 7 to finals is a reorder,
+not a cut: pre-selection parsers work on ingested images (FR-17) through
+`EvidenceSource`, so nothing built early has to be re-plumbed later. Phase 0 is **not**
+deferred — see "Phase 0 first, always" in §2.
+
+### 3.1 Ownership
+
+| Role | Owns | Pre-selection | Finals |
+|---|---|---|---|
+| **P1 · Core / integration lead** | `core/`, `services/`, `cli.py`, CI, packaging | **Phase 0:** `EvidenceSource` for raw + E01 via pyewf (FR-17, FR-75) · `Hasher` · `AuditChain` + `spectra case verify` (FR-71, FR-72) · minimal `CaseStore` · `MediaTool.remux` (FR-31) · CLI skeleton. Co-owns `plugins/base.py` and `core/models.py` with Formats A and B | `JobRunner` checkpointing (NFR-09) · read-only proof under strace/Procmon (AC-03) · offline PyInstaller bundle + SBOM (NFR-15, NFR-16) · end-to-end integration |
+| **P2 · Formats engineer A** | `identify/`, `plugins/dahua.py`, `plugins/generic_fs.py` | **Phase 1:** signature scanner, confidence, ambiguity surfacing (FR-01..FR-04). **Phase 3:** Dahua family T1 parse, `DHAV` `frames()`, `carve_signatures()`, `decode_time()` with known-good vectors (FR-21, FR-54, NFR-12) | **Phase 9:** `generic_fs` + TP-Link VIGI full parse (doc 4 §6) · unknown-format dossier (FR-09) · firmware facts and brand inference (FR-05, FR-06) |
+| **P3 · Formats engineer B** | `plugins/hikvision.py`, `recover/` | **Phase 4:** master sector, both HIKBTREE copies with divergence reported, `frames()`, `decode_time()` (FR-22). **Phase 5:** generic T2 with validation, T3 carver + GOP reassembly, merge/dedup, coverage map (FR-29, FR-41..FR-45) — driven by each plugin's `frames()` and `carve_signatures()`, so Dahua recovery needs no Hikvision knowledge and vice versa | T4 bad-sector tolerant carve (FR-43) · resumable carve (FR-46) · **Phase 9:** Uniview and Matrix — full parse if the doc 4 §11 procedure completes, otherwise carve-only, stated per family |
+| **P4 · Acquisition + time** | `acquire/`, `timeline/`, **hardware track** | **Day one:** procure units in the §2 priority order; run doc 4 §11 steps 1–2 (zeroed baseline image, controlled recordings with a GPS clock in frame) — this produces Tier R images *and* the timestamp ground truth Phase 6 needs. **Phase 6:** three-layer time model, offset methods A–D, uncertainty propagation, refusal to assert absolute time (FR-50..FR-53), gap analysis (FR-58), cross-device correlation (FR-60) | **Phase 2:** raw + E01 physical imaging, write-blocker verification, HPA/DCO, bad-sector map, provenance classes A–D (FR-10..FR-15, FR-19) · live logical acquisition (FR-16) · Tier R images R-01..R-04 delivered to Formats A and B |
+| **P5 · Reporting + UI** | `report/`, `ui/`, templates, legal-format review | Desktop shell · multi-channel timeline view (FR-57) · report skeleton with §7 negative findings **generated from the coverage map** (FR-81) and the s. 63(4) certificate template (FR-83) — cheap, and the strongest page in the demo | **Phase 7:** full 12-section PDF/A + `findings.json` (FR-80..FR-86) · third-party verification instructions (FR-85) · synchronised playback (FR-59) · G6 dry-run review with a practising examiner |
+| **P6 · ML + validation** | `ml/`, `tools/make_corpus.py`, doc 6 execution | **Tier S corpus first:** S-01..S-05 and S-07 gate Phases 3–6, then S-09..S-11 (doc 6 §3.1), each with `ground_truth.json`. Motion detection (FR-90) once those land | **Phase 8:** object detection and face detect-and-cluster in the network-isolated worker (FR-91, FR-92, FR-95, FR-96); resolve the model licence question (doc 2 Q4) before choosing a model · **Phase 10:** execute doc 6, produce the validation report |
+
+### 3.2 Handoffs
+
+```
+Core               ── EvidenceSource · Hasher · AuditChain · models.py ─────▶ everyone
+ML + validation    ── Tier S images + ground_truth.json ────────────────────▶ Formats A, Formats B, Acquisition + time
+Acquisition + time ── Tier R images + in-frame clock ground truth ──────────▶ Formats A, Formats B, ML + validation
+Formats A / B      ── Recording[] · Frame · DeviceTime (raw + encoding) ────▶ recover/, timeline/, MediaTool
+Formats B          ── recovered Recording[] (tier + confidence) · coverage ─▶ Reporting + UI
+Acquisition + time ── ReferenceTime · gaps · provenance class ──────────────▶ Reporting + UI
+```
+
+### 3.3 Contracts — frozen at the end of Phase 1
+
+A contract change after the freeze needs the owner and every consumer to agree; it costs
+both parser engineers a rewrite otherwise.
+
+| Contract | Owner | Consumers |
 |---|---|---|
-| **Core / integration lead** | `core/`, services, CLI, packaging, CI | 0, 10 |
-| **Formats engineer A** | `identify/`, `plugins/dahua`, `plugins/generic_fs` | 1, 3, 9 |
-| **Formats engineer B** | `plugins/hikvision`, `recover/` | 4, 5, 9 |
-| **Acquisition + time** | `acquire/`, `timeline/` | 2, 6 |
-| **Reporting + UI** | `report/`, `ui/`, templates, legal-format review | 7 |
-| **ML + validation** | `ml/`, `tools/make_corpus.py`, doc 6 execution | 1 (corpus), 8, 10 |
+| `VendorPlugin` protocol (doc 3 §4) | Core + Formats A + Formats B | identify, recover, services |
+| `Recording`, `Frame`, `Extent` (FR-28) | Core | everyone |
+| `DeviceTime` — raw value + encoding, **never a pre-converted datetime** (doc 3 §8.1) | Formats A | timeline, report |
+| `ReferenceTime` (doc 3 §8.1) | Acquisition + time | report, UI |
+| `AuditRecord` + canonical JSON rules (doc 3 §3.3) | Core | everyone |
+| Coverage buckets, including precedence where tiers overlap (doc 3 §6.2) | Formats B | report |
+| Provenance classes A–D (FR-19) | Acquisition + time | report |
+| `ground_truth.json` schema (doc 6 §3.4) | ML + validation | Formats A, Formats B, Acquisition + time |
+| `findings.json` schema (FR-86) | Reporting + UI | ML + validation (AC-11) |
 
-Formats A and B share `plugins/base.py` — **freeze the contract early** (end of Phase 1)
-so the two parser efforts can run genuinely in parallel. A contract change mid-project
-costs both engineers a rewrite.
+### 3.4 Rules
+
+- **Nothing reads evidence except through `EvidenceSource`** (doc 3 D1), from the first
+  parser commit. No `open()` on an evidence path anywhere else.
+- **The corpus generator is not written by the parser authors.** A generator and a
+  parser that share one person's misreading of a format pass each other's tests. ML +
+  validation builds Tier S from doc 4; Tier R images from the hardware track are the
+  tiebreak.
+- **Formats A and B each own their family's frame container** (`frames()`,
+  `carve_signatures()`, `decode_time()`). `recover/` and `MediaTool` stay vendor-free.
+- **Who frees up first at finals:** Formats A and B, once Phases 3–5 meet their §5
+  done-criteria — they move to Phase 9 breadth.
+- **Cut order if time compresses:** Phase 9, then Phase 8. Never Phase 0, 2, or 7 (§2).
+- **Pre-selection demo scope:** §4 segments 0:00–1:15 and 2:00–4:30, the audit-tamper
+  moment from 1:15–2:00, and the §7 negative-findings page from 5:15–6:00. Acquisition
+  pre-flight, analytics, and the full report are finals.
 
 ---
 
@@ -134,7 +189,7 @@ disk — which is why one plugin covers four brands."*
 **1:15–2:00 — Acquisition and integrity.**
 Show the pre-flight: write protection verified, HPA detected, SMART read. Show dual
 MD5/SHA-256 with source-vs-image verification. Show one audit-chain record.
-Then: **tamper with a record and run `sentinel case verify`.** It fails, and names the
+Then: **tamper with a record and run `spectra case verify`.** It fails, and names the
 exact record. Ten seconds, and it is the most persuasive thing in the demo.
 
 **2:00–3:00 — Recovery (the differentiator).**
@@ -192,7 +247,7 @@ could not do."*
 
 | Phase | Done when |
 |---|---|
-| 0 | `sentinel case new` works; a tampered audit record is detected 100/100 times |
+| 0 | `spectra case new` works; a tampered audit record is detected 100/100 times |
 | 1 | Every corpus image is classified correctly, with zero false-confident misidentifications |
 | 2 | A real disk images to E01 with hashes matching independent `sha256sum`; `strace` shows zero writes to evidence |
 | 3 | Disk image → playable evidence MP4 whose ES hash equals the reference |

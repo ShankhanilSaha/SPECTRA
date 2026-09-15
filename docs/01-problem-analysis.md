@@ -1,6 +1,6 @@
 # 01 — Problem Analysis & Technical Writeup
 
-**Project:** SENTINEL — Unified Vendor-Agnostic DVR/NVR Forensic Analysis Platform
+**Project:** SPECTRA — Unified Vendor-Agnostic DVR/NVR Forensic Analysis Platform
 **Problem statement:** SIH 2026, NTRO
 **Document status:** Baseline v1.0
 **Audience:** Everyone on the project. This is the document that explains *why the
@@ -300,7 +300,7 @@ are four physically different situations and the community has no shared doctrin
 | Recorder seized, disk healthy | Pull disk, attach write-blocker | Full physical image of the SATA disk + separate dump of firmware flash |
 | Recorder seized, disk fine, no write-blocker on site | Live recorder only | **Do not use the recorder's own export as primary evidence.** Document and defer to lab. |
 | Recorder cannot be powered down (hospital, toll, airport) | Network access only | Live logical acquisition over vendor protocol/ONVIF with continuous hashing, explicitly documented as a *logical, non-verifiable-at-source* acquisition |
-| Disk physically damaged | Nothing | Route to hardware data-recovery; SENTINEL consumes whatever image comes back |
+| Disk physically damaged | Nothing | Route to hardware data-recovery; SPECTRA consumes whatever image comes back |
 | Only a USB export exists (owner-provided) | Vendor clip files | Treat as third-party-derived evidence; hash on receipt; parse the container; flag provenance in the report |
 
 **Design response.** Ship acquisition as a first-class module with **four documented
@@ -579,7 +579,7 @@ project the operative provisions are:
   includes **hash values of the electronic record** (the format contemplates hashes such
   as SHA-256, SHA-1 and MD5).
 
-**→ Product requirement:** SENTINEL must generate a **pre-filled s. 63(4) certificate**
+**→ Product requirement:** SPECTRA must generate a **pre-filled s. 63(4) certificate**
 as a report annexure, populated with the record identification, the acquisition
 particulars, the device particulars, and the hash values it computed. This is a
 concrete, high-scoring, low-effort deliverable that directly serves the user, and it is
@@ -648,7 +648,7 @@ There is no **open, auditable, India-focused, unified** tool that spans
 legally-formatted reporting** for the DVR/NVR brands actually seized in India, with the
 chain-of-custody rigour and the BSA-compliant output that Indian courts now require.
 
-SENTINEL targets exactly that gap. It does not need to beat DVR Examiner on the number
+SPECTRA targets exactly that gap. It does not need to beat DVR Examiner on the number
 of supported firmware revisions — it cannot, on a hackathon timeline. It beats it on
 being open and auditable, on carving tiers T2–T4, on the measured-clock-offset time
 model, on cross-device correlation, on offline analytics, and on producing a report
@@ -749,7 +749,7 @@ validation.
 | Face **recognition** against a watchlist / identity database | Accuracy, privacy, and admissibility. Detection + clustering only. §4.9 |
 | Video **enhancement** (super-resolution, deblurring) | A different discipline; Amped FIVE-class tooling; and generative enhancement is evidentially dangerous |
 | Deepfake / tamper detection of the video content | Valuable but a separate research problem. Structural tamper detection (gaps, index inconsistency, re-encode traces at the container level) **is** in scope; pixel-level synthetic-media detection is not |
-| Physical data recovery from failed platters | Cleanroom hardware problem. SENTINEL consumes the resulting image |
+| Physical data recovery from failed platters | Cleanroom hardware problem. SPECTRA consumes the resulting image |
 | Firmware exploitation / password bypass on live devices | Legally fraught, model-specific, and not needed when you have the disk |
 | Real-time / live monitoring VMS features | Different product entirely |
 | Cloud storage, cloud analytics, telemetry | Deliberate architectural exclusion, §7.1 |

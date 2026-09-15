@@ -2,7 +2,7 @@
 
 **Named deliverable** of the problem statement.
 **Scope:** seizure, acquisition, examination, and reporting of DVR/NVR surveillance
-evidence using SENTINEL.
+evidence using SPECTRA.
 **Audience:** Investigating Officers (SOP-1), Forensic Examiners (SOP-2 … SOP-6).
 **Legal basis:** BSA 2023 ss. 61, 63; BNSS 2023 ss. 105, 176(3); IT Act 2000 s. 79A.
 See [doc 1 §5](01-problem-analysis.md#5-legal-and-evidentiary-framework-india).
@@ -162,17 +162,17 @@ reach the person doing the analysis.
 **Who:** Forensic Examiner.
 **Provenance class produced:** A (write-blocked) or B (justified alternative).
 **Materials:** hardware write blocker, SATA/power cabling, examination workstation with
-SENTINEL, sufficient target storage (≥ 1.2× source capacity), Form F-3.
+SPECTRA, sufficient target storage (≥ 1.2× source capacity), Form F-3.
 
 ### Step 1 — Receive and open the case
 
 1.1 Verify the seal is intact; photograph it; record the seal number against F-1.
 1.2 Photograph the device as received.
-1.3 In SENTINEL: create the case; enter FIR/authority references, examiner identity and
+1.3 In SPECTRA: create the case; enter FIR/authority references, examiner identity and
 s. 79A notification reference.
 1.4 **Attach and hash** the seizure memo, F-1, and the s. 105 seizure video as case
 documents (FR-74). The custody chain now starts at the scene, not at your bench.
-1.5 Record the custody transfer (F-2 → SENTINEL custody record).
+1.5 Record the custody transfer (F-2 → SPECTRA custody record).
 
 ### Step 2 — Remove the disk
 
@@ -192,7 +192,7 @@ If not possible, record that it was not done and why.
 
 3.1 Connect the disk to a **hardware write blocker**, then to the workstation.
 3.2 Record the write blocker's make, model, and firmware version on F-3.
-3.3 In SENTINEL, run pre-flight: it verifies write protection, reads drive identity and
+3.3 In SPECTRA, run pre-flight: it verifies write protection, reads drive identity and
 SMART, and detects HPA/DCO (FR-12, FR-13).
 3.4 **If write protection cannot be established, stop.** Escalate. Proceed only with a
 documented, authorised override, which downgrades the evidence to provenance class B and
@@ -205,12 +205,12 @@ in that region, so the hidden area can be the difference between a parse and a c
 
 4.1 Select the format: **E01** for lab exchange, **raw** where downstream tools require
 it. Both are acceptable; state which in the report.
-4.2 Start acquisition. SENTINEL hashes source and image in one pass and verifies them
+4.2 Start acquisition. SPECTRA hashes source and image in one pass and verifies them
 against each other (FR-11).
 4.3 If read errors occur, let the retry policy run; the bad-sector map is a finding and
 goes into the report (FR-14). Do not abort a failing disk's acquisition — a partial
 image with a documented bad-sector map is evidence; an abandoned acquisition is nothing.
-4.4 On completion, record MD5 and SHA-256 on F-3 and confirm SENTINEL's verification
+4.4 On completion, record MD5 and SHA-256 on F-3 and confirm SPECTRA's verification
 passed.
 4.5 Repeat for every disk in the array.
 
@@ -246,7 +246,7 @@ acquisition is genuinely impossible, and record why on F-3.
    it is still the best offset you can get, and the device is conveniently still running.
 4. Connect over the network using the credentials obtained at seizure. Use a direct
    cable or an isolated switch; do not attach the recorder to a general network.
-5. In SENTINEL, start live logical acquisition (FR-16) for the required channels and
+5. In SPECTRA, start live logical acquisition (FR-16) for the required channels and
    time window. The tool hashes continuously and writes a full protocol transcript.
 6. **Issue no configuration change, no PTZ command, no deletion, no format.** The tool
    only reads; make sure the operator does too.
@@ -305,7 +305,7 @@ settings screen).
   transaction, phone call) → ±2–60 s
 - **D** — device RTC read at a noted instant before power-down → ±1 s at that instant
 
-2.3 If **none** is available, set the offset as undetermined. SENTINEL will then present
+2.3 If **none** is available, set the offset as undetermined. SPECTRA will then present
 device-local time only and will not assert absolute time anywhere (FR-53). **Do not
 enter an estimated offset to make the output look complete.** An honest "offset
 undetermined" survives cross-examination; an unsupported timestamp does not.
@@ -463,7 +463,7 @@ DESCRIPTION: ______________________________________  SEAL NO: ______________
  3  ________________  _________________  _________________  ________________  [ ]Y [ ]N   ____
  4  ________________  _________________  _________________  ________________  [ ]Y [ ]N   ____
 
-Every physical transfer gets a row. Every row is also entered into the SENTINEL case
+Every physical transfer gets a row. Every row is also entered into the SPECTRA case
 custody record. A gap in this form is a gap in the chain.
 ```
 
@@ -492,7 +492,7 @@ HIDDEN AREAS
   Removed for acquisition: [ ] Y [ ] N   Authorised by: ______________
 
 ACQUISITION
-  Tool + version: SENTINEL ____________   Format: [ ] raw  [ ] E01  [ ] AFF4
+  Tool + version: SPECTRA _____________   Format: [ ] raw  [ ] E01  [ ] AFF4
   Start: ____-__-__ __:__:__   End: ____-__-__ __:__:__
   Bytes acquired: ______________   Bad sectors: ______  Bad-sector map ref: __________
 
