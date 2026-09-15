@@ -43,7 +43,7 @@ silently diverge.
 | **Product** | **SPECTRA** — Unified Vendor-Agnostic DVR/NVR Forensic Analysis Platform (*Surveillance Platform for Evidence Carving, Timeline Reconstruction & Analysis*) |
 | **Context** | Smart India Hackathon (SIH) 2026 · problem statement **SIH26150** · organisation **NTRO** |
 | **Naming** | One name everywhere: repo/folder `SPECTRA`, product **SPECTRA** in prose, Python package `spectra/`, CLI command `spectra`. Renamed from the earlier working name "SENTINEL" on 2026-09-15 — any remaining occurrence is a leftover to fix |
-| **Status (as of 2026-09-15)** | **Documentation only.** Eight docs + README. No code, no `pyproject.toml`, no tests, no CI. The `spectra/` tree in §6.12 is the *target* layout, not something that exists. Check `git log` / `git status` for current state |
+| **Status (as of 2026-09-15)** | **Phase 0 built; Phases 1 and 3 partly built** (P1 + P2, §13.1). `spectra/core`, `identify/`, `plugins/{base,registry,dahua}`, `services/`, `cli.py`, pytest suite, CI workflow. Everything else in §6.12 is still *target* layout. Dahua on-disk parsing is blocked on a verified superblock layout (§17 item 11). Check `git log` / `git status` for current state |
 | **Team** | 6 people, 6 work sections P1–P6 (§12). **Shankhanil (git `ShankhanilSaha`) owns P1 and P2** (§13). Other owners not yet recorded |
 | **SIH stages** | **Pre-selection** = everything built before the team is shortlisted (demo-visible pipeline + deck). **Finals** = everything built after shortlisting, for the grand finale. See §11 |
 | **Dev machine** | Windows 11, PowerShell primary, Git Bash available. Product targets Linux (primary) and Windows 10/11 (NFR-06) — code must be portable |
@@ -1024,44 +1024,56 @@ this order, and keep Phase 0 deliberately small so Phases 1 and 3 start early.
 
 **Phase 0 — foundation (P1). Unblock the team first.**
 
-- [ ] **Scaffold:** `spectra/` package per §6.12, `pyproject.toml` (Python 3.11+), pytest,
-      lint, CI running Tier S + unit tests on every commit (doc 6 §5).
-- [ ] **`core/models.py`:** `Extent`, `Recording`, `Frame`, `DeviceTime` (raw + encoding +
+- [x] **Scaffold:** `spectra/` package per §6.12, `pyproject.toml` (Python 3.11+), pytest,
+      lint, CI running Tier S + unit tests on every commit (doc 6 §5). *CI workflow written
+      (`.github/workflows/ci.yml`, Linux + Windows); not yet run on GitHub.*
+- [x] **`core/models.py`:** `Extent`, `Recording`, `Frame`, `DeviceTime` (raw + encoding +
       optional local), `ReferenceTime` (utc may be None, uncertainty always present),
       `ProbeResult`, `DiskLayout`. Draft now; freeze at end of Phase 1 with P3 (and P4 for
-      the time types).
-- [ ] **`core/source.py`:** `EvidenceSource` protocol with **no write method**;
+      the time types). *Drafted with additions listed in §17 item 12.*
+- [x] **`core/source.py`:** `EvidenceSource` protocol with **no write method**;
       `RawImageSource` (incl. split `.001…`), `EwfImageSource` via pyewf, `FileSetSource`;
       `read`, `map` (mmap window), `readable_ranges`; zero-fill-with-gap-recorded on read
-      errors; handles opened read-only.
-- [ ] **`core/hashing.py`:** `Hasher` — MD5 + SHA-256 in one `update()` pass.
-- [ ] **`core/audit.py`:** `AuditChain` with canonical JSON, `prev_digest` linking,
+      errors; handles opened read-only. *E01 tested against images from a test-only EWF
+      writer (`tests/ewfgen.py`); see §17 item 16 for the libewf zero-fill limitation.*
+- [x] **`core/hashing.py`:** `Hasher` — MD5 + SHA-256 in one `update()` pass.
+- [x] **`core/audit.py`:** `AuditChain` with canonical JSON, `prev_digest` linking,
       `started`/`ok`/`error` records, `verify()` naming the broken record;
       `tests/test_audit.py` tamper trials (insert, delete, reorder, field edit) — 100/100
       detected (AC-08, TC-IN-01).
-- [ ] **`core/casestore.py`:** case directory layout, SQLite WAL schema subset
+- [x] **`core/casestore.py`:** case directory layout, SQLite WAL schema subset
       (`case_meta`, `evidence`, `identification`, `disk_layout`, `recording`, `artifact`,
       `coverage`, `audit` + UPDATE/DELETE triggers), content-addressed `artifacts/`.
-- [ ] **`cli.py` (Typer):** `spectra case new`, `case open`, `case verify`,
-      `import image`, `import files` — calling the same services the UI will use.
-- [ ] **`core/media.py`:** `MediaTool.remux` (pinned FFmpeg, `-c copy`, command + stderr
+      *Full doc 3 §11 schema plus columns listed in §17 item 12; manifest head digest catches
+      tail truncation.*
+- [x] **`cli.py` (Typer):** `spectra case new`, `case open`, `case verify`,
+      `import image`, `import files` — calling the same services the UI will use. *Also
+      `case info`, `identify [select]`, `parse`, `list recordings`, `export clip`,
+      `verify chain`.*
+- [x] **`core/media.py`:** `MediaTool.remux` (pinned FFmpeg, `-c copy`, command + stderr
       logged and hashed, version recorded). Read §17 item 5 on what "bit-identical" must
-      mean before writing the comparison.
-- [ ] **`plugins/base.py` + `registry.py`:** the §6.4 contract and `select_plugin` with
-      ambiguity audit. Co-owned with P3.
+      mean before writing the comparison. *Per-frame PTS via a SPECTRA-written MPEG-TS
+      intermediate; every export re-extracts the ES and asserts VCL NAL identity
+      (`core/es.py`). FFmpeg is located via `SPECTRA_FFMPEG`/PATH until packaging pins one.*
+- [x] **`plugins/base.py` + `registry.py`:** the §6.4 contract and `select_plugin` with
+      ambiguity audit. Co-owned with P3. *Dispatch lives in `identify/engine.py`; ambiguity
+      policy in §17 item 13.*
 - **Done:** `spectra case new` works; tampered record detected 100/100; any image opens
-  read-only through `EvidenceSource`.
+  read-only through `EvidenceSource`. *Met.*
 
 **Phase 1 — identification (P2).**
 
-- [ ] **`identify/engine.py`:** probe every registered plugin at FR-01 offsets (LBA 0,
+- [x] **`identify/engine.py`:** probe every registered plugin at FR-01 offsets (LBA 0,
       first/last 1 MB, configurable sparse sweep); report family, layout version,
       confidence, matched bytes + offsets, all candidates (FR-02); unknown layout →
-      `parse_supported=False` → carving (FR-03); superblock facts (FR-04).
-- [ ] Persist to `identification`; audit `identify.complete` / `identify.ambiguous`.
+      `parse_supported=False` → carving (FR-03); superblock facts (FR-04). *FR-04 facts
+      land in `disk_layout` at parse time; standard-FS signatures reported as observations.*
+- [x] Persist to `identification`; audit `identify.complete` / `identify.ambiguous`.
 - [ ] **Tests:** S-10 must report ambiguity, not pick one · S-11 must report zero
       recordings · S-09 truncated must not crash · TC-RB-01/02 (zero-length, NTFS image).
-- [ ] **Freeze contracts** at end of Phase 1 with P3/P4/P6 (§14).
+      *TC-RB-01/02 and ambiguity pass on in-test fixtures; S-09/S-10/S-11 wait on P6's corpus.*
+- [ ] **Freeze contracts** at end of Phase 1 with P3/P4/P6 (§14). *Needs the team; draft
+      additions in §17 item 12.*
 - **Done:** every corpus image classified correctly, zero false-confident
   misidentifications (AC-01).
 
@@ -1069,23 +1081,30 @@ this order, and keep Phase 0 deliberately small so Phases 1 and 3 start early.
 
 - [ ] **`plugins/dahua.py` `probe()`:** superblock magic near LBA 0 [R] **plus
       `DHAV`/`dhav` in the data area as a fallback** so a damaged or unknown-version
-      superblock is still carvable (doc 4 §3.4).
+      superblock is still carvable (doc 4 §3.4). *DHAV fallback and `.dav` export probe
+      done; superblock magic blocked — §17 item 11.*
 - [ ] **`superblock()` / `enumerate()`:** T1, plus the `include_orphans` hook P3's T2
-      needs; versioned layout descriptors; unknown version → carve-only.
-- [ ] **`frames()`:** DHAV header → payload → trailing length → `dhav`; payload as
+      needs; versioned layout descriptors; unknown version → carve-only. *Done for the
+      `dav_export_v1` layout (export file sets); raw disks raise `LayoutNotSupported` →
+      carve-only until §17 item 11 is resolved.*
+- [x] **`frames()`:** DHAV header → payload → trailing length → `dhav`; payload as
       `memoryview`; channel + `t_device` from the header; bounds-check every length field
-      (TC-RB-05).
-- [ ] **`carve_signatures()`:** `DHAV` with validator "length field lands on a matching
+      (TC-RB-05). *Plus `pts_ms` from the 16-bit tick, unwrapped using the 1 s date.*
+- [x] **`carve_signatures()`:** `DHAV` with validator "length field lands on a matching
       `dhav`" — the self-validating pair that kills false positives (doc 4 §3.2).
-- [ ] **`decode_time()`:** packed date-time [R] → `DeviceTime(raw, encoding)`. Never
+- [x] **`decode_time()`:** packed date-time [R] → `DeviceTime(raw, encoding)`. Never
       return a bare `datetime`. Vectors in `tests/test_timestamps.py`; ≥ 12 ground-truth
-      vectors before upgrading the label to [C] (doc 4 §12 row 5).
-- [ ] **Export path:** `frames()` → ES writer → `Hasher` → `MediaTool.remux` → `Hasher` →
+      vectors before upgrading the label to [C] (doc 4 §12 row 5). *Spec-conformance
+      vectors only; the ground-truth test skips with notice until hardware.*
+- [x] **Export path:** `frames()` → ES writer → `Hasher` → `MediaTool.remux` → `Hasher` →
       `artifacts/`, per-frame `t_device` as PTS (FR-30..FR-33); audit `export.start` /
       `export.complete`.
 - [ ] Validate the DHAV parser on `.dav` export files (Tier E) before the disk parser
       exists (doc 6 §3.3); T1 tests on S-01; expose hooks for P3's S-02/S-03 tests.
-- **Done:** disk image → playable evidence MP4 whose ES hash equals the reference.
+      *Validated on `.dav` files built from real x264/x265 output (spec conformance, not real
+      Tier E); real `.dav` samples and S-01 still needed.*
+- **Done:** disk image → playable evidence MP4 whose ES hash equals the reference. *Met on
+  the export-file path only (H.264 and H.265); the disk path waits on §17 item 11.*
 
 ### 13.2 Finals
 
@@ -1197,7 +1216,11 @@ freeze needs the owner and every consumer to agree.
 - When changing requirements, update the traceability tables (doc 1 end, doc 2 §11, doc 6
   §9) in the same change.
 
-### 15.3 Planned CLI (doc 7 §5 — none of it exists yet)
+### 15.3 Planned CLI (doc 7 §5)
+
+Implemented so far: `case new|open|info|verify`, `import image|files`, `identify [select]`,
+`parse`, `list recordings`, `export clip`, `verify chain`. Everything else below is planned.
+`import image` requires `--provenance A|B|C|D` (§17 item 14).
 
 ```
 spectra case new|open|info|attach|custody|verify
@@ -1278,6 +1301,37 @@ diverge from the docs.
     Candidates to verify: YOLOX / RT-DETR (Apache-2.0), OpenCV Zoo YuNet/SFace, PaddleOCR
     for ANPR.
 
+**Raised while building Phase 0/1/3 (2026-09-15) — need team agreement or a doc update:**
+
+11. **No Dahua on-disk layout to implement.** Doc 4 §3.1 gives the superblock and block
+    index only as [R] concepts, with no offsets. So the plugin ships no disk layout
+    descriptor, and raw Dahua-family disks are carve-only. That also blocks S-01: P6
+    cannot generate a Dahua *disk* layout from doc 4 without inventing one, and a parser
+    written to match an invented layout proves nothing (corpus independence, §15.1).
+    Options: (a) wait for hardware (doc 4 §12 row 3), or (b) agree a clearly labelled
+    **synthetic** layout spec that P6 generates and P2 parses, never shown as real.
+12. **Contract additions for the freeze (§14):** `ProbePlan` passed to `probe(src, plan)`;
+    `Frame.extent`, `Frame.sequence`, `Frame.pts_ms`; `Recording.channel`/`t_start`/`t_end`
+    may be `None`, and `stream` may be `"unknown"`; `Recording.frame_count`/`notes`;
+    `Signature.validate(src, offset) -> length | None`. Schema adds `evidence.source_*`,
+    `identification.status/selection/…_json`, `recording.stream/frame_count/notes_json`,
+    and `artifact.size_bytes/source_record_seq`. Doc 3 §4 and §11 need updating once agreed.
+13. **Ambiguity policy is stricter than doc 3 §4.1.** When more than one family matches,
+    nothing is auto-selected, and parse is blocked until an audited
+    `identify select --reason`. This follows rule 10 and TC-ID-02. The doc 3 sketch picks
+    the highest confidence.
+14. **`import image` requires a stated provenance class.** SPECTRA didn't acquire the image
+    and can't know A/B/C/D (FR-19). The doc 7 §5 example omits the flag.
+15. **Dev FFmpeg isn't LGPL.** Tests run with a GPL build (`imageio-ffmpeg`, or apt in
+    CI). `MediaTool` records `ffmpeg_gpl_or_nonfree_build` on every export. The pinned
+    LGPL bundle (NFR-16) is still a packaging task.
+16. **libewf zero-fills corrupt E01 chunks without saying so.** pyewf 20240506 raises
+    nothing and exposes no checksum-error list, so a bad chunk reads as zeros and can't be
+    recorded as a gap. Ingest compares the MD5 stored in the E01 with the media and writes
+    any mismatch, or a missing stored hash, into `evidence.notes`. It can't locate the
+    chunk. Options: verify chunk checksums ourselves, or get the libewf error list exposed.
+    The PyPI wheel also can't *write* E01 (no zlib), which matters for Phase 2 acquisition.
+
 **Diagram ideas NOT adopted — research spikes only, never committed scope:**
 
 - XiongMai WFS support and a "shared DHFS = WFS descriptor core" — XiongMai isn't one of
@@ -1305,8 +1359,10 @@ ONNX detector licence · Q5 government TSA availability for RFC 3161.
 - **Keep this file in sync.** When the split, phases, or contracts change, update doc 8 §3
   and §11–§14 here in the same change. When a doc changes a rule summarised here, update
   this file too.
-- **Nothing is runnable yet.** Don't claim a CLI command, test, or CI job works until it
-  exists and has been run.
+- **Claim only what has been run.** Phase 0 and parts of Phases 1 and 3 exist (§13.1). Don't
+  claim a CLI command, test, or CI job works until it exists and has been run. Dev setup:
+  `python -m venv .venv`, `pip install -e ".[dev,ewf]"`, then `pytest`. FFmpeg tests skip
+  with a notice unless `SPECTRA_FFMPEG` or PATH provides FFmpeg.
 - **Format facts:** quote doc 4 with its label; never write "confirmed" for [R]/[H]/[U].
   Synthetic-only results must be labelled synthetic.
 - **Legal claims:** stick to the citations in §8.1; flag any new legal claim for review

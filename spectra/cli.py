@@ -1,0 +1,363 @@
+"""`spectra` command-line interface (doc 7 §5). A peer of the UI over the same services —
+no logic lives here beyond argument handling and presentation (doc 3 §2)."""
+
+from __future__ import annotations
+
+import getpass
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Annotated, Any
+
+import typer
+
+import spectra
+from spectra.core.audit import CanonicalisationError
+from spectra.core.casestore import CaseError, CaseMeta, CaseStore
+from spectra.core.media import MediaError, MediaTool, locate_ffmpeg
+from spectra.core.source import SourceError
+from spectra.identify.engine import IdentificationResult, IdentifyError
+from spectra.services import ServiceError
+from spectra.services import evidence as evidence_service
+from spectra.services import export as export_service
+from spectra.services import identify as identify_service
+from spectra.services import parse as parse_service
+
+app = typer.Typer(no_args_is_help=True, add_completion=False,
+                  help="SPECTRA — vendor-agnostic DVR/NVR forensic analysis (offline).")
+case_app = typer.Typer(no_args_is_help=True, help="Create, open, inspect and verify cases.")
+import_app = typer.Typer(no_args_is_help=True, help="Ingest existing images or export files.")
+identify_app = typer.Typer(help="Identify the format family of an evidence item.")
+list_app = typer.Typer(no_args_is_help=True, help="List case contents.")
+export_app = typer.Typer(no_args_is_help=True, help="Export evidence clips.")
+verify_app = typer.Typer(no_args_is_help=True, help="Third-party verification commands.")
+app.add_typer(case_app, name="case")
+app.add_typer(import_app, name="import")
+app.add_typer(identify_app, name="identify")
+app.add_typer(list_app, name="list")
+app.add_typer(export_app, name="export")
+app.add_typer(verify_app, name="verify")
+
+HANDLED = (CaseError, ServiceError, SourceError, IdentifyError, MediaError, CanonicalisationError)
+
+CaseOpt = Annotated[Path | None, typer.Option("--case", help="Case directory (else SPECTRA_CASE "
+                                              "or the case last opened with 'case open').")]
+EvidenceOpt = Annotated[str | None, typer.Option("--evidence", help="Evidence ID, e.g. EV-001.")]
+JsonOpt = Annotated[bool, typer.Option("--json", help="Machine-readable output.")]
+
+
+# -- context --------------------------------------------------------------------------------
+
+def operator() -> str:
+    return os.environ.get("SPECTRA_OPERATOR") or getpass.getuser()
+
+
+def _pointer_file() -> Path:
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA") or Path.home())
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    return base / "spectra" / "current_case"
+
+
+def _case_dir(case: Path | None) -> Path:
+    if case:
+        return case
+    if os.environ.get("SPECTRA_CASE"):
+        return Path(os.environ["SPECTRA_CASE"])
+    pointer = _pointer_file()
+    if pointer.is_file():
+        return Path(pointer.read_text("utf-8").strip())
+    raise CaseError("no case selected: pass --case, set SPECTRA_CASE, or run 'spectra case open'")
+
+
+def _open(case: Path | None) -> CaseStore:
+    return CaseStore.open(_case_dir(case), operator())
+
+
+def _media(store: CaseStore) -> MediaTool | None:
+    path = locate_ffmpeg()
+    return MediaTool(path, store.root / "logs") if path else None
+
+
+def _emit_json(data: Any) -> None:
+    typer.echo(json.dumps(data, indent=2, sort_keys=True))
+
+
+# -- case -----------------------------------------------------------------------------------
+
+@case_app.command("new")
+def case_new(
+    case_id: Annotated[str, typer.Option("--id", help="Agency case number.")],
+    directory: Annotated[Path, typer.Option("--dir", help="Case directory to create.")],
+    title: Annotated[str, typer.Option("--title")] = "",
+    agency: Annotated[str, typer.Option("--agency")] = "",
+    fir: Annotated[str, typer.Option("--fir", help="FIR reference.")] = "",
+    authority: Annotated[str, typer.Option("--authority", help="Authority reference.")] = "",
+    examiner: Annotated[str, typer.Option("--examiner")] = "",
+    designation: Annotated[str, typer.Option("--designation")] = "",
+    s79a: Annotated[str, typer.Option("--s79a", help="IT Act s. 79A notification ref.")] = "",
+) -> None:
+    """Create a case directory with its database, audit chain and manifest."""
+    meta = CaseMeta(case_id, title, agency, fir, authority, examiner, designation, s79a)
+    with CaseStore.create(directory, meta, operator()) as store:
+        head_seq, head = store.audit.head()
+    typer.echo(f"created case {case_id} at {directory}")
+    typer.echo(f"audit head: seq {head_seq} {head}")
+
+
+@case_app.command("open")
+def case_open(directory: Path) -> None:
+    """Make DIRECTORY the current case for subsequent commands."""
+    with CaseStore.open(directory, operator()) as store:
+        case_id = store.case_id
+    pointer = _pointer_file()
+    pointer.parent.mkdir(parents=True, exist_ok=True)
+    pointer.write_text(str(directory.resolve()), "utf-8")
+    typer.echo(f"current case: {case_id} ({directory.resolve()})")
+
+
+@case_app.command("info")
+def case_info(case: CaseOpt = None, as_json: JsonOpt = False) -> None:
+    """Show case metadata, evidence items and the audit head."""
+    with _open(case) as store:
+        meta = store.meta()
+        items = [
+            {k: row[k] for k in ("id", "kind", "provenance_class", "label", "capacity_bytes",
+                                 "sha256", "source_path")}
+            for row in (evidence_service.evidence_row(store, r[0]) for r in
+                        store.conn.execute("SELECT id FROM evidence ORDER BY id"))
+        ]
+        head_seq, head = store.audit.head()
+    data = {"case": meta, "evidence": items, "audit_head": {"seq": head_seq, "digest": head}}
+    if as_json:
+        _emit_json(data)
+        return
+    typer.echo(f"case {meta['case_id']}  {meta['title']}")
+    for key in ("agency", "fir_ref", "examiner_name", "examiner_designation", "created_utc"):
+        if meta.get(key):
+            typer.echo(f"  {key}: {meta[key]}")
+    for item in items:
+        typer.echo(f"  {item['id']}  {item['kind']}  class {item['provenance_class']}  "
+                   f"{item['capacity_bytes']} bytes  sha256 {item['sha256']}")
+    typer.echo(f"  audit head: seq {head_seq} {head}")
+
+
+@case_app.command("verify")
+def case_verify(case: CaseOpt = None, as_json: JsonOpt = False) -> None:
+    """Verify the audit chain, the manifest head digest, and every artefact hash (FR-72)."""
+    with _open(case) as store:
+        result = store.verify()
+    _print_verify(result, as_json)
+    if not result.ok:
+        raise typer.Exit(1)
+
+
+def _print_verify(result: Any, as_json: bool) -> None:
+    if as_json:
+        _emit_json({
+            "ok": result.ok, "records_checked": result.chain.records_checked,
+            "head_seq": result.chain.head_seq, "head_digest": result.chain.head_digest,
+            "broken_at_seq": result.chain.broken_at_seq, "artifacts_checked":
+            result.artifacts_checked, "problems": list(result.problems),
+            "warnings": list(result.warnings),
+        })
+        return
+    typer.echo(f"audit records checked: {result.chain.records_checked}")
+    typer.echo(f"audit head: seq {result.chain.head_seq} {result.chain.head_digest}")
+    typer.echo(f"artefacts checked: {result.artifacts_checked}")
+    for warning in result.warnings:
+        typer.echo(f"WARNING: {warning}")
+    for problem in result.problems:
+        typer.echo(f"FAIL: {problem}")
+    typer.echo("VERIFIED" if result.ok else "VERIFICATION FAILED")
+
+
+# -- import ---------------------------------------------------------------------------------
+
+@import_app.command("image")
+def import_image(
+    file: Annotated[Path, typer.Option("--file", help="Raw, split-raw (.001) or E01 image.")],
+    provenance: Annotated[str, typer.Option("--provenance", help="Provenance class A|B|C|D of "
+                                            "this image — stated by the examiner (FR-19).")],
+    label: Annotated[str, typer.Option("--label")] = "",
+    note: Annotated[str, typer.Option("--note")] = "",
+    case: CaseOpt = None,
+) -> None:
+    """Ingest an existing image and hash it (FR-17)."""
+    with _open(case) as store:
+        result = evidence_service.import_image(store, file, provenance.upper(), label, note)
+    _print_ingest(result)
+
+
+@import_app.command("files")
+def import_files(
+    directory: Annotated[Path, typer.Option("--dir", help="Directory of export files.")],
+    label: Annotated[str, typer.Option("--label")] = "",
+    note: Annotated[str, typer.Option("--note")] = "",
+    case: CaseOpt = None,
+) -> None:
+    """Ingest owner-provided export files as provenance class D (FR-18)."""
+    with _open(case) as store:
+        result = evidence_service.import_files(store, directory, label, note)
+    _print_ingest(result)
+
+
+def _print_ingest(result: evidence_service.IngestResult) -> None:
+    typer.echo(f"ingested {result.evidence_id}: {result.size} bytes")
+    typer.echo(f"  md5    {result.md5}")
+    typer.echo(f"  sha256 {result.sha256}")
+    if result.gaps:
+        typer.echo(f"  WARNING: {len(result.gaps)} unreadable range(s) zero-filled and recorded")
+    status = result.embedded_hash_check.get("status")
+    if status == "MISMATCH":
+        typer.echo("  WARNING: MD5 stored in the E01 does not match its media — image corrupt "
+                   "or altered (recorded on the evidence item)")
+    elif status == "none_stored" and result.source_format == "ewf":
+        typer.echo("  NOTE: the E01 stores no MD5; chunk corruption would be undetectable")
+
+
+# -- identify -------------------------------------------------------------------------------
+
+@identify_app.callback(invoke_without_command=True)
+def identify_cmd(
+    ctx: typer.Context, evidence: EvidenceOpt = None, case: CaseOpt = None, as_json: JsonOpt = False
+) -> None:
+    """Probe every registered plugin and report all candidates with matched bytes (FR-01..04)."""
+    if ctx.invoked_subcommand is not None:
+        return
+    with _open(case) as store:
+        evidence_id = evidence_service.default_evidence_id(store, evidence)
+        result = identify_service.run_identify(store, evidence_id)
+    if as_json:
+        _emit_json({"evidence_id": evidence_id, **result.to_json()})
+    else:
+        _print_identification(evidence_id, result)
+
+
+def _print_identification(evidence_id: str, result: IdentificationResult) -> None:
+    typer.echo(f"{evidence_id}: {result.status.upper()}  (support: {result.support})")
+    for candidate in result.candidates:
+        layout = candidate.layout_version or "unrecognised"
+        typer.echo(f"  candidate {candidate.family}  layout {layout}"
+                   f"  confidence {candidate.confidence:.2f}  parse_supported "
+                   f"{candidate.parse_supported}  plugin {candidate.plugin_version}")
+        for match in candidate.matches:
+            typer.echo(f"    @ {match.offset:#x}  {match.data.hex(' ')}  — {match.description}")
+        if candidate.note:
+            typer.echo(f"    note: {candidate.note}")
+    for observation in result.observations:
+        typer.echo(f"  observed @ {observation.offset:#x} {observation.data.hex(' ')} — "
+                   f"{observation.description}")
+    for error in result.errors:
+        typer.echo(f"  PROBE ERROR in {error.family} {error.plugin_version}: "
+                   f"{error.error_type}: {error.message}")
+    if result.status == "ambiguous":
+        typer.echo("  More than one family matched. Review the matched bytes, then run "
+                   "'spectra identify select --family F --reason \"...\"'. Nothing was selected.")
+    elif result.status == "unknown":
+        typer.echo("  No format family matched: not parseable; carving is the remaining route.")
+
+
+@identify_app.command("select")
+def identify_select(
+    family: Annotated[str, typer.Option("--family")],
+    reason: Annotated[str, typer.Option("--reason", help="Why this candidate (audited).")],
+    evidence: EvidenceOpt = None,
+    case: CaseOpt = None,
+) -> None:
+    """Select one of the reported candidates for an ambiguous identification (audited)."""
+    with _open(case) as store:
+        evidence_id = evidence_service.default_evidence_id(store, evidence)
+        chosen = identify_service.select_family(store, evidence_id, family, reason)
+    typer.echo(f"{evidence_id}: selected {chosen.family} "
+               f"(parse_supported {chosen.parse_supported})")
+
+
+# -- parse / list / export ------------------------------------------------------------------
+
+@app.command("parse")
+def parse_cmd(evidence: EvidenceOpt = None, case: CaseOpt = None) -> None:
+    """Read the layout and enumerate T1 recordings through the selected plugin."""
+    with _open(case) as store:
+        evidence_id = evidence_service.default_evidence_id(store, evidence)
+        summary = parse_service.parse(store, evidence_id)
+    typer.echo(f"{summary.evidence_id}: {summary.family} {summary.layout_version} — "
+               f"{summary.recordings} recording(s) on channel(s) {list(summary.channels)}")
+    typer.echo("  times are device-local; no clock offset established (FR-53)")
+
+
+@list_app.command("recordings")
+def list_recordings(
+    evidence: EvidenceOpt = None,
+    channel: Annotated[int | None, typer.Option("--channel")] = None,
+    case: CaseOpt = None,
+    as_json: JsonOpt = False,
+) -> None:
+    """List recordings with tier, confidence and device-local times."""
+    with _open(case) as store:
+        rows = parse_service.recording_rows(store, evidence, channel)
+    if as_json:
+        _emit_json(rows)
+        return
+    for row in rows:
+        start = row["t_local_start"] or "time unknown"
+        end = row["t_local_end"] or "time unknown"
+        typer.echo(f"{row['id']}  {row['evidence_id']}  ch {row['channel']}  {row['codec']}  "
+                   f"{start} → {end} (device-local)  {row['frame_count']} frames  "
+                   f"{row['recovery_tier']} conf {row['confidence']:.2f}")
+    if not rows:
+        typer.echo("no recordings")
+
+
+@export_app.command("clip")
+def export_clip(
+    recording: Annotated[str, typer.Option("--recording", help="Recording ID, e.g. REC-0001.")],
+    out: Annotated[
+        Path | None, typer.Option("--out", help="Also copy files + manifest here.")
+    ] = None,
+    case: CaseOpt = None,
+) -> None:
+    """Export the ES (always) and a verified evidence-copy MP4 (when possible)."""
+    with _open(case) as store:
+        result = export_service.export_recording(store, recording, _media(store), out)
+    typer.echo(f"{result.recording_id}: {result.frames} frames")
+    typer.echo(f"  ES   sha256 {result.es.sha256}  md5 {result.es.md5}")
+    if result.mp4:
+        typer.echo(f"  MP4  sha256 {result.mp4.sha256}  md5 {result.mp4.md5}  (evidence copy, "
+                   "VCL NAL units verified identical to the ES)")
+    else:
+        typer.echo(f"  MP4  not produced: {result.mp4_skipped_reason}")
+    for path in result.copied_to:
+        typer.echo(f"  wrote {path}")
+
+
+# -- third-party verification ---------------------------------------------------------------
+
+@verify_app.command("chain")
+def verify_chain(case: Annotated[Path, typer.Option("--case")], as_json: JsonOpt = False) -> None:
+    """Verify a case's audit chain, manifest head and artefacts on any machine (FR-85)."""
+    with CaseStore.open(case, operator()) as store:
+        result = store.verify()
+    _print_verify(result, as_json)
+    if not result.ok:
+        raise typer.Exit(1)
+
+
+@app.command("version")
+def version() -> None:
+    """Print the SPECTRA version."""
+    typer.echo(f"spectra {spectra.__version__}")
+
+
+def main() -> None:
+    try:
+        app()
+    except HANDLED as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise SystemExit(2) from exc
+
+
+if __name__ == "__main__":
+    main()

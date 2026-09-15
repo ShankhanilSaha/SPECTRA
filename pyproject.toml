@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spectra"
+description = "SPECTRA — unified vendor-agnostic DVR/NVR forensic analysis platform (SIH26150)"
+readme = "README.md"
+requires-python = ">=3.11"
+dynamic = ["version"]
+dependencies = [
+    "typer>=0.12",
+]
+
+[project.optional-dependencies]
+# E01/Ex01 ingest (FR-17). libewf is LGPL-3.0, used as a dynamically loaded extension.
+ewf = ["libewf-python>=20240506"]
+dev = [
+    "pytest>=8",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+spectra = "spectra.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "spectra.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["spectra*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "ffmpeg: needs an FFmpeg binary (SPECTRA_FFMPEG or PATH); skipped with notice otherwise",
+    "ewf: needs pyewf (libewf-python); skipped with notice otherwise",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S"]
+ignore = [
+    "S101",   # assert is how pytest works
+    "S603",   # subprocess without shell — FFmpeg is invoked with an argument list by design
+    "S608",   # SQL built from fixed column lists, never from user input
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S311"]  # random is fine for fuzzing fixtures

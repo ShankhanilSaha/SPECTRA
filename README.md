@@ -70,8 +70,18 @@ SPECTRA/
 
 ## Status
 
-Documentation phase complete. See [doc 8](docs/08-demo-and-deliverables.md) for the
-build order and what to implement first.
+Documentation complete. Implementation has started: the Phase 0 foundation (read-only
+evidence I/O, dual hashing, hash-chained audit log, case store, verified FFmpeg remux, CLI),
+the identification engine, and the Dahua-family DHAV container parser for `.dav` export
+files. See [doc 8](docs/08-demo-and-deliverables.md) for the build order and `CLAUDE.md`
+§13 for progress.
+
+```bash
+python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install -e ".[dev,ewf]"
+pytest                                            # FFmpeg tests need SPECTRA_FFMPEG or ffmpeg on PATH
+spectra --help
+```
 
 ## Licence & handling
 
