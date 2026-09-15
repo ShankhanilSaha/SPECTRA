@@ -18,7 +18,9 @@ from spectra.core.casestore import CaseError, CaseMeta, CaseStore
 from spectra.core.media import MediaError, MediaTool, locate_ffmpeg
 from spectra.core.source import SourceError
 from spectra.identify.engine import IdentificationResult, IdentifyError
+from spectra.ml.motion import MotionConfig
 from spectra.services import ServiceError
+from spectra.services import analytics as analytics_service
 from spectra.services import evidence as evidence_service
 from spectra.services import export as export_service
 from spectra.services import identify as identify_service
@@ -35,6 +37,8 @@ export_app = typer.Typer(no_args_is_help=True, help="Export evidence clips.")
 verify_app = typer.Typer(no_args_is_help=True, help="Third-party verification commands.")
 time_app = typer.Typer(no_args_is_help=True,
                        help="Clock-offset evidence and time normalisation (FR-50..FR-53).")
+analyze_app = typer.Typer(no_args_is_help=True,
+                          help="Run offline ML and motion gating analysis (FR-90..FR-97).")
 app.add_typer(case_app, name="case")
 app.add_typer(time_app, name="time")
 app.add_typer(import_app, name="import")
@@ -42,6 +46,7 @@ app.add_typer(identify_app, name="identify")
 app.add_typer(list_app, name="list")
 app.add_typer(export_app, name="export")
 app.add_typer(verify_app, name="verify")
+app.add_typer(analyze_app, name="analyze")
 
 HANDLED = (CaseError, ServiceError, SourceError, IdentifyError, MediaError, CanonicalisationError)
 
@@ -449,6 +454,54 @@ def gaps_cmd(
                        f"{gap['duration_s']:.0f} s — synchronised absence is a finding")
         if not entry["channel_gaps"] and not entry["synchronised_gaps"]:
             typer.echo(f"  no gaps ≥ {data['min_gap_s']:g} s")
+
+
+# -- analytics ------------------------------------------------------------------------------
+
+@analyze_app.command("motion")
+def analyze_motion_cmd(
+    recording: Annotated[str, typer.Argument(help="Recording ID to analyze.")],
+    case: CaseOpt = None,
+    sensitivity: Annotated[int, typer.Option("--sensitivity", "-s",
+                                            help="Pixel threshold (1..255).")] = 25,
+    min_area: Annotated[int, typer.Option("--min-area", "-a",
+                                         help="Min changed pixels for motion.")] = 400,
+    as_json: JsonOpt = False,
+) -> None:
+    """Run Stage 1 motion/activity gating on a recording (FR-90)."""
+    cfg = MotionConfig(sensitivity=sensitivity, min_area_pixels=min_area)
+    with _open(case) as store:
+        summary = analytics_service.run_motion_analysis(store, recording, config=cfg)
+    if as_json:
+        data = {
+            "recording_id": summary.recording_id,
+            "total_frames": summary.total_frames,
+            "motion_frames": summary.motion_frames,
+            "segments": [
+                {
+                    "start_frame": s.start_frame,
+                    "end_frame": s.end_frame,
+                    "start_pts_ms": s.start_pts_ms,
+                    "end_pts_ms": s.end_pts_ms,
+                    "peak_score": s.peak_score,
+                    "motion_frame_count": s.motion_frame_count,
+                }
+                for s in summary.segments
+            ],
+            "annotations_count": len(summary.annotations),
+        }
+        _emit_json(data)
+        return
+
+    typer.echo(f"recording: {summary.recording_id}")
+    typer.echo(f"  total frames:  {summary.total_frames}")
+    typer.echo(f"  motion frames: {summary.motion_frames}")
+    typer.echo(f"  segments:      {len(summary.segments)}")
+    for i, seg in enumerate(summary.segments, 1):
+        typer.echo(f"    seg {i}: frames {seg.start_frame}..{seg.end_frame} "
+                   f"({seg.start_pts_ms} ms → {seg.end_pts_ms} ms, "
+                   f"peak score {seg.peak_score:.2f})")
+    typer.echo(f"  annotations:   {len(summary.annotations)} persisted in case.db")
 
 
 # -- third-party verification ---------------------------------------------------------------
