@@ -1,0 +1,57 @@
+{
+  "description": "Bad-sector disk image with known unreadable LBA ranges (T4 oracle)",
+  "family": "generic",
+  "fixture_id": "S-06",
+  "format": "raw",
+  "md5": "2f416bfe0faf41722bc8a029670b8000",
+  "oracles": {
+    "bad_lbas": [
+      100,
+      101,
+      102,
+      500,
+      501,
+      1200,
+      1201,
+      2048
+    ],
+    "bad_ranges": [
+      [
+        51200,
+        512
+      ],
+      [
+        51712,
+        512
+      ],
+      [
+        52224,
+        512
+      ],
+      [
+        256000,
+        512
+      ],
+      [
+        256512,
+        512
+      ],
+      [
+        614400,
+        512
+      ],
+      [
+        614912,
+        512
+      ],
+      [
+        1048576,
+        512
+      ]
+    ],
+    "bad_sector_count": 8
+  },
+  "recordings": [],
+  "sha256": "f4d3d4c567e29a5c32416072fa87484bd8faa22513ed92353fa93fb47579649c",
+  "size_bytes": 2097152
+}

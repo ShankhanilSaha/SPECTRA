@@ -1,0 +1,15 @@
+{
+  "description": "S-04 with primary HIKBTREE corrupted, backup intact",
+  "family": "hikvision",
+  "fixture_id": "S-05",
+  "format": "raw",
+  "md5": "5b504519e967589617c58eec28e646c2",
+  "oracles": {
+    "backup_valid": true,
+    "expected_index_used": "backup",
+    "primary_corrupted": true
+  },
+  "recordings": [],
+  "sha256": "93be73515bf237d82802e8b21bec3b101f08b898778183088259c218d70ab8d6",
+  "size_bytes": 4194304
+}

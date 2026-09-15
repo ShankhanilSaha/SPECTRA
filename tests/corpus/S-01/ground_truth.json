@@ -1,0 +1,85 @@
+{
+  "description": "Dahua-family baseline layout, 4 channels, no deletions",
+  "family": "dahua",
+  "fixture_id": "S-01",
+  "format": "raw",
+  "md5": "13fa96da9601db2b5e812d37a4f4905a",
+  "oracles": {
+    "channels": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "expected_support": "carve_only",
+    "t1_recordings_count": 4
+  },
+  "recordings": [
+    {
+      "channel": 0,
+      "codec": "h264",
+      "es_sha256": "ec22cf495f5eb3a3eab8cf81e3854ce0dc6c14c732821d24dc156d8a97a2036c",
+      "extents": [
+        [
+          65536,
+          5378
+        ]
+      ],
+      "frame_count": 50,
+      "recording_id": "s01_ch0",
+      "recovery_tier": "T1",
+      "t_end": "2026-03-05T00:00:02",
+      "t_start": "2026-03-05T00:00:00"
+    },
+    {
+      "channel": 1,
+      "codec": "h264",
+      "es_sha256": "ec22cf495f5eb3a3eab8cf81e3854ce0dc6c14c732821d24dc156d8a97a2036c",
+      "extents": [
+        [
+          103682,
+          5378
+        ]
+      ],
+      "frame_count": 50,
+      "recording_id": "s01_ch1",
+      "recovery_tier": "T1",
+      "t_end": "2026-03-05T06:00:02",
+      "t_start": "2026-03-05T06:00:00"
+    },
+    {
+      "channel": 2,
+      "codec": "h264",
+      "es_sha256": "ec22cf495f5eb3a3eab8cf81e3854ce0dc6c14c732821d24dc156d8a97a2036c",
+      "extents": [
+        [
+          141828,
+          5378
+        ]
+      ],
+      "frame_count": 50,
+      "recording_id": "s01_ch2",
+      "recovery_tier": "T1",
+      "t_end": "2026-03-05T12:00:02",
+      "t_start": "2026-03-05T12:00:00"
+    },
+    {
+      "channel": 3,
+      "codec": "h264",
+      "es_sha256": "ec22cf495f5eb3a3eab8cf81e3854ce0dc6c14c732821d24dc156d8a97a2036c",
+      "extents": [
+        [
+          179974,
+          5378
+        ]
+      ],
+      "frame_count": 50,
+      "recording_id": "s01_ch3",
+      "recovery_tier": "T1",
+      "t_end": "2026-03-05T18:00:02",
+      "t_start": "2026-03-05T18:00:00"
+    }
+  ],
+  "sha256": "a84183400194b8907d618aeecf7daffe7c3725d2413e4eaa6bba9286f1b7a7c0",
+  "size_bytes": 4194304
+}

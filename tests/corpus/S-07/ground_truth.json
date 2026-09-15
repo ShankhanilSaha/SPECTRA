@@ -1,0 +1,26 @@
+{
+  "description": "Recordings with known clock offset +00:17:42 and UTC+05:30",
+  "family": "dahua",
+  "fixture_id": "S-07",
+  "format": "dav",
+  "md5": "0d6e8bf2180798e0452794cf25e6f943",
+  "oracles": {
+    "device_timezone": "UTC+05:30",
+    "offset_seconds": 1062,
+    "reference_utc_start": "2026-03-05T08:30:00"
+  },
+  "recordings": [
+    {
+      "channel": 1,
+      "codec": "h264",
+      "es_sha256": "655a9a4827d7b7519adff40eefb2da95befd61dfc988aa05762c9cb379641f07",
+      "frame_count": 25,
+      "offset_seconds": 1062,
+      "recording_id": "s07_offset_clip",
+      "t_device_local": "2026-03-05T14:17:42",
+      "t_reference_utc": "2026-03-05T08:30:00"
+    }
+  ],
+  "sha256": "dd59759b19aeadd3d3bc9c13fbd4c5a8aa91f202cb42ee2f1db82562d3d281f0",
+  "size_bytes": 2689
+}

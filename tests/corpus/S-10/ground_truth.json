@@ -1,0 +1,18 @@
+{
+  "description": "Deliberately ambiguous image with Hikvision and Dahua signatures",
+  "family": "ambiguous",
+  "fixture_id": "S-10",
+  "format": "raw",
+  "md5": "5b9a68f2dffde2748ff5d205ca1f5eac",
+  "oracles": {
+    "candidate_families": [
+      "hikvision_test",
+      "dahua"
+    ],
+    "expected_status": "ambiguous",
+    "must_not_auto_select": true
+  },
+  "recordings": [],
+  "sha256": "ce2c6e85f553598b9fdd2f73b6ee6c335078adc365f00eff8ebed5f3c4c11739",
+  "size_bytes": 3145728
+}

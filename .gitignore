@@ -37,3 +37,8 @@ venv/
 .ruff_cache/
 .coverage
 .coverage.*
+
+# Synthetic corpus binary files
+tests/corpus/**/*.raw
+tests/corpus/**/*.dav
+tests/corpus/**/*.img

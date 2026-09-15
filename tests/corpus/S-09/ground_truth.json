@@ -1,0 +1,16 @@
+{
+  "description": "Truncated export file cut at 60 % of total size",
+  "family": "dahua",
+  "fixture_id": "S-09",
+  "format": "dav",
+  "md5": "df3b312e4c7af8651bde69088e0ac0a4",
+  "oracles": {
+    "must_not_crash": true,
+    "original_size": 10756,
+    "report_truncation": true,
+    "truncated_size": 6453
+  },
+  "recordings": [],
+  "sha256": "d2d4a6979bfc20c333bd734442e89e3efbb9ae449c3944f185753e517861ae9b",
+  "size_bytes": 6453
+}

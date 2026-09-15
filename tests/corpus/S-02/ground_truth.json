@@ -1,0 +1,85 @@
+{
+  "description": "S-01 with orphan index entries; data blocks intact (T2 oracle)",
+  "family": "dahua",
+  "fixture_id": "S-02",
+  "format": "raw",
+  "md5": "d9b629294040ddb368ef757cc20ef1aa",
+  "oracles": {
+    "t2_orphan_recordings": [
+      "s02_ch1"
+    ],
+    "total_recordings": 4
+  },
+  "recordings": [
+    {
+      "channel": 0,
+      "codec": "h264",
+      "es_sha256": "b50890d96a2dd0c32b24c7eedf384be6d07f558e6496276e6a24b9559d2cf833",
+      "extents": [
+        [
+          65536,
+          4338
+        ]
+      ],
+      "frame_count": 40,
+      "is_orphan": false,
+      "recording_id": "s02_ch0",
+      "recovery_tier": "T1",
+      "t_end": "2026-03-05T10:00:01.600000",
+      "t_start": "2026-03-05T10:00:00"
+    },
+    {
+      "channel": 1,
+      "codec": "h264",
+      "es_sha256": "b50890d96a2dd0c32b24c7eedf384be6d07f558e6496276e6a24b9559d2cf833",
+      "extents": [
+        [
+          102642,
+          4338
+        ]
+      ],
+      "frame_count": 40,
+      "is_orphan": true,
+      "recording_id": "s02_ch1",
+      "recovery_tier": "T2",
+      "t_end": "2026-03-05T11:00:01.600000",
+      "t_start": "2026-03-05T11:00:00"
+    },
+    {
+      "channel": 2,
+      "codec": "h264",
+      "es_sha256": "b50890d96a2dd0c32b24c7eedf384be6d07f558e6496276e6a24b9559d2cf833",
+      "extents": [
+        [
+          139748,
+          4338
+        ]
+      ],
+      "frame_count": 40,
+      "is_orphan": false,
+      "recording_id": "s02_ch2",
+      "recovery_tier": "T1",
+      "t_end": "2026-03-05T12:00:01.600000",
+      "t_start": "2026-03-05T12:00:00"
+    },
+    {
+      "channel": 3,
+      "codec": "h264",
+      "es_sha256": "b50890d96a2dd0c32b24c7eedf384be6d07f558e6496276e6a24b9559d2cf833",
+      "extents": [
+        [
+          176854,
+          4338
+        ]
+      ],
+      "frame_count": 40,
+      "is_orphan": false,
+      "recording_id": "s02_ch3",
+      "recovery_tier": "T1",
+      "t_end": "2026-03-05T13:00:01.600000",
+      "t_start": "2026-03-05T13:00:00"
+    }
+  ],
+  "sha256": "e526c95914c5f8f1f808a6c14b66e5406230fae99cf972b9b774d87549936bd4",
+  "size_bytes": 4194304
+}

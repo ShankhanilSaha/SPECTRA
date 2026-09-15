@@ -1,0 +1,16 @@
+{
+  "description": "Hikvision-family layout, master sector + dual HIKBTREE copies",
+  "family": "hikvision",
+  "fixture_id": "S-04",
+  "format": "raw",
+  "md5": "6500bf1cd512000f00056cdc812e141a",
+  "oracles": {
+    "backup_tree_offset": 131072,
+    "expected_index_used": "primary",
+    "master_sector_offset": 0,
+    "primary_tree_offset": 65536
+  },
+  "recordings": [],
+  "sha256": "909b7f1aa4e2181487073c0b5c7b076f19fb22694d8d851f024858612b5981eb",
+  "size_bytes": 4194304
+}

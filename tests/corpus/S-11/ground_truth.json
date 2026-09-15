@@ -1,0 +1,15 @@
+{
+  "description": "Empty / zero-filled disk with zero recordings",
+  "family": "unknown",
+  "fixture_id": "S-11",
+  "format": "raw",
+  "md5": "b2d1236c286a3c0704224fe4105eca49",
+  "oracles": {
+    "expected_recordings_count": 0,
+    "expected_status": "unknown",
+    "must_not_fabricate": true
+  },
+  "recordings": [],
+  "sha256": "5647f05ec18958947d32874eeb788fa396a05d0bab7c1b71f112ceb7e9b31eee",
+  "size_bytes": 2097152
+}

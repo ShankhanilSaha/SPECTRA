@@ -1,0 +1,40 @@
+{
+  "description": "S-01 with partially overwritten blocks (T3 carving oracle)",
+  "family": "dahua",
+  "fixture_id": "S-03",
+  "format": "raw",
+  "md5": "dd7c865ff4f4b1842981aa3b996acfa8",
+  "oracles": {
+    "overwrite_len": 16384,
+    "overwrite_start": 67616,
+    "surviving_ranges": [
+      [
+        65536,
+        2080
+      ],
+      [
+        84000,
+        -13086
+      ]
+    ]
+  },
+  "recordings": [
+    {
+      "channel": 0,
+      "recording_id": "s03_damaged",
+      "recovery_tier": "T3",
+      "surviving_ranges": [
+        [
+          65536,
+          2080
+        ],
+        [
+          84000,
+          -13086
+        ]
+      ]
+    }
+  ],
+  "sha256": "c749c4cf7c0496f8c6a236d8668a5d0b4267531110638e1fd0a9fed3adfd8bc6",
+  "size_bytes": 4194304
+}

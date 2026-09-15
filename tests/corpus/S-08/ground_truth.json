@@ -1,0 +1,26 @@
+{
+  "description": "Clock shifted backwards 2 hours mid-recording (multi-segment oracle)",
+  "family": "dahua",
+  "fixture_id": "S-08",
+  "format": "dav",
+  "md5": "87bbf7bb60a3c7120d3dbaeab7cbeaf6",
+  "oracles": {
+    "clock_rollback_detected": true,
+    "discontinuity_offset": 2689,
+    "rollback_delta_seconds": -7200
+  },
+  "recordings": [
+    {
+      "frame_count": 25,
+      "segment": 1,
+      "t_device_start": "2026-03-05T14:00:00"
+    },
+    {
+      "frame_count": 25,
+      "segment": 2,
+      "t_device_start": "2026-03-05T12:00:00"
+    }
+  ],
+  "sha256": "e179ef72285d79b507dd3d8b1eec2057e13330a7962de785ea011d3d3f1d8943",
+  "size_bytes": 5378
+}
