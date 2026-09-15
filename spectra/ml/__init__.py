@@ -7,5 +7,14 @@ All results are leads, never identifications (Rule 12, FR-96).
 from __future__ import annotations
 
 from spectra.ml.models import AnnotationRecord, ModelSpec, format_disclaimer
+from spectra.ml.motion import MotionConfig, MotionDetector, MotionFrameResult, MotionSegment
 
-__all__ = ["AnnotationRecord", "ModelSpec", "format_disclaimer"]
+__all__ = [
+    "AnnotationRecord",
+    "ModelSpec",
+    "MotionConfig",
+    "MotionDetector",
+    "MotionFrameResult",
+    "MotionSegment",
+    "format_disclaimer",
+]
