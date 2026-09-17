@@ -9,6 +9,7 @@ There is no `if family == ...` in this package, and there must never be one.
 
 from __future__ import annotations
 
+from spectra.recover.carver import CarveHit, scan
 from spectra.recover.coverage import (
     BUCKET_PRECEDENCE,
     Bucket,
@@ -17,12 +18,21 @@ from spectra.recover.coverage import (
     claim,
     resolve,
 )
+from spectra.recover.merge import MergeStats, merge, recording_extents
+from spectra.recover.orphans import OrphanVerdict, validate
 
 __all__ = [
     "BUCKET_PRECEDENCE",
     "Bucket",
+    "CarveHit",
     "CoverageMap",
     "CoverageRun",
+    "MergeStats",
+    "OrphanVerdict",
     "claim",
+    "merge",
+    "recording_extents",
     "resolve",
+    "scan",
+    "validate",
 ]
