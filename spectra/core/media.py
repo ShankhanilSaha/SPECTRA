@@ -86,6 +86,47 @@ class RemuxResult:
     tool: ToolInfo
 
 
+@dataclass(frozen=True, slots=True)
+class DecodedGray:
+    """A file of raw 8-bit greyscale frames, all the same size (doc 3 §9).
+
+    Analytics decode to frames for analysis only and never write beside the evidence. This
+    lands in the case's own working directory, is deleted by the caller, and is a
+    derivative in the strict sense: it must never be exported or presented as the evidence
+    copy.
+    """
+
+    path: Path
+    width: int
+    height: int
+    fps: float
+    frame_bytes: int
+    count: int
+    log: Path
+
+    def pts_ms(self, index: int) -> int:
+        """Presentation time of a sampled frame, from the sampling rate the caller set."""
+        return int(round(index * 1000.0 / self.fps))
+
+
+class DecodeRefused(MediaError):
+    """The stream cannot be decoded, so no analysis may claim to have looked at it."""
+
+
+def iter_gray_frames(decoded: DecodedGray) -> Iterator[tuple[int, bytes]]:
+    """Yield (index, frame bytes) one frame at a time.
+
+    Streamed rather than loaded: a long recording at 2 fps is still hundreds of megabytes
+    of raw frames, and the memory ceiling is 4 GB regardless of input size (NFR-04, D4).
+    """
+    with open(decoded.path, "rb") as handle:
+        for position in range(decoded.count):
+            block = handle.read(decoded.frame_bytes)
+            if len(block) != decoded.frame_bytes:
+                break
+            yield position, block
+
+
 def locate_ffmpeg(explicit: str | Path | None = None) -> Path | None:
     for candidate in (explicit, os.environ.get("SPECTRA_FFMPEG")):
         if candidate:
@@ -221,6 +262,69 @@ class MediaTool:
                 fields = [f.strip() for f in line.split(",")]
                 times.append(int(fields[2]) * timebase)
         return times
+
+
+    def decode_gray(
+        self,
+        es_path: Path,
+        index: Iterable[FrameIndexEntry],
+        codec: str,
+        work_dir: Path,
+        log_prefix: str,
+        *,
+        width: int = 320,
+        height: int = 240,
+        fps: float = 2.0,
+    ) -> DecodedGray:
+        """Decode video to raw greyscale frames for analysis (FR-90, doc 3 §9).
+
+        Motion gating needs *pixels*. Differencing the coded bitstream instead measures
+        entropy-coded byte churn, which tracks bitrate — and because an encoder spends more
+        bits on a moving scene, such a result looks plausible while being a proxy for the
+        wrong quantity. Nothing downstream can recover from that, so the decode is not
+        optional: this refuses rather than approximating.
+
+        Frames are sampled at `fps` and scaled to `width` x `height`. Motion gating needs
+        neither full rate nor full resolution, and that reduction is what makes Stage 1
+        cheap enough to run before the expensive stages.
+        """
+        if codec not in STREAM_TYPES:
+            raise DecodeRefused(
+                f"codec {codec!r} has no Annex-B path, so it cannot be decoded for analysis"
+            )
+        work_dir.mkdir(parents=True, exist_ok=True)
+        ts_path = work_dir / f"{log_prefix}-decode.ts"
+        raw_path = work_dir / f"{log_prefix}-gray.raw"
+        try:
+            with open(es_path, "rb") as es_in, open(ts_path, "wb") as ts_out:
+                units = write_transport_stream(_read_units(es_in, index), codec, ts_out)
+            if units == 0:
+                raise DecodeRefused("no access units to decode")
+            log = self._run(
+                [
+                    "-f", "mpegts", "-i", str(ts_path),
+                    "-map", "0:v:0",
+                    "-vf", f"fps={fps},scale={width}:{height}",
+                    "-pix_fmt", "gray", "-f", "rawvideo", str(raw_path),
+                ],
+                f"{log_prefix}-decode.log",
+            )
+        except BaseException:
+            raw_path.unlink(missing_ok=True)
+            raise
+        finally:
+            ts_path.unlink(missing_ok=True)
+
+        frame_bytes = width * height
+        size = raw_path.stat().st_size
+        if size == 0 or size % frame_bytes != 0:
+            raw_path.unlink(missing_ok=True)
+            raise DecodeRefused(
+                f"the decoder produced {size} bytes, which is not a whole number of "
+                f"{width}x{height} greyscale frames; the stream did not decode"
+            )
+        return DecodedGray(raw_path, width, height, fps, frame_bytes,
+                           size // frame_bytes, log)
 
 
 def _read_units(

@@ -644,7 +644,11 @@ def analyze_motion_cmd(
     """Run Stage 1 motion/activity gating on a recording (FR-90)."""
     cfg = MotionConfig(sensitivity=sensitivity, min_area_pixels=min_area)
     with _open(case) as store:
-        summary = analytics_service.run_motion_analysis(store, recording, config=cfg)
+        # Motion gating decodes; without FFmpeg the service refuses rather than
+        # differencing a compressed bitstream, which measures bitrate and not motion.
+        summary = analytics_service.run_motion_analysis(
+            store, recording, config=cfg, media=_media(store)
+        )
     if as_json:
         data = {
             "recording_id": summary.recording_id,
@@ -662,6 +666,8 @@ def analyze_motion_cmd(
                 for s in summary.segments
             ],
             "annotations_count": len(summary.annotations),
+            "sampled_fps": summary.sampled_fps,
+            "decode_note": summary.decode_note,
         }
         _emit_json(data)
         return
@@ -675,6 +681,8 @@ def analyze_motion_cmd(
                    f"({seg.start_pts_ms} ms → {seg.end_pts_ms} ms, "
                    f"peak score {seg.peak_score:.2f})")
     typer.echo(f"  annotations:   {len(summary.annotations)} persisted in case.db")
+    typer.echo(f"  {summary.decode_note}")
+    typer.echo("  Machine-generated leads for human review. Not identifications.")
 
 
 # -- third-party verification ---------------------------------------------------------------

@@ -40,7 +40,17 @@ def fake_ffmpeg(tmp: Path, stdout: str, exit_code: int = 0, stderr: str = "") ->
     return script
 
 
-def encode_test_stream(tmp: Path, codec: str = "h264", frames: int = 50, gop: int = 25) -> bytes:
+#: A motionless scene. Differencing decoded pixels finds nothing here; differencing the
+#: compressed bitstream still finds "motion", because coded bytes vary frame to frame
+#: regardless of content. That difference is what the motion tests turn on.
+STATIC_SOURCE = "color=c=gray:size=320x240:rate=25"
+
+#: The default: an animated test pattern, so there is real motion to find.
+MOVING_SOURCE = "testsrc=size=320x240:rate=25"
+
+
+def encode_test_stream(tmp: Path, codec: str = "h264", frames: int = 50,
+                       gop: int = 25, source: str = MOVING_SOURCE) -> bytes:
     ffmpeg = require_ffmpeg()
     out = tmp / f"reference.{codec}"
     gop_params = f"keyint={gop}:min-keyint={gop}:scenecut=0"
@@ -51,7 +61,7 @@ def encode_test_stream(tmp: Path, codec: str = "h264", frames: int = 50, gop: in
     raw_format = {"h264": "h264", "h265": "hevc"}[codec]
     subprocess.run(
         [str(ffmpeg), "-hide_banner", "-nostdin", "-loglevel", "error",
-         "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25",
+         "-f", "lavfi", "-i", source,
          "-frames:v", str(frames), "-pix_fmt", "yuv420p", *encoder,
          "-f", raw_format, str(out)],
         check=True,
