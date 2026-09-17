@@ -25,6 +25,7 @@ from spectra.services import evidence as evidence_service
 from spectra.services import export as export_service
 from spectra.services import identify as identify_service
 from spectra.services import parse as parse_service
+from spectra.services import recover as recover_service
 from spectra.services import timeline as timeline_service
 
 app = typer.Typer(no_args_is_help=True, add_completion=False,
@@ -295,6 +296,77 @@ def parse_cmd(evidence: EvidenceOpt = None, case: CaseOpt = None) -> None:
     typer.echo(f"{summary.evidence_id}: {summary.family} {summary.layout_version} — "
                f"{summary.recordings} recording(s) on channel(s) {list(summary.channels)}")
     typer.echo("  times are device-local; no clock offset established (FR-53)")
+
+
+
+@app.command("recover")
+def recover_cmd(
+    tiers: Annotated[str, typer.Option("--tiers",
+        help="Comma-separated: T2 (orphan index entries), T3 (signature carve), "
+             "T4 (bad-sector tolerant). Default T2,T3.")] = "T2,T3",
+    budget: Annotated[float | None, typer.Option("--budget-seconds",
+        help="Abort the carve after this long rather than returning a short result.")] = None,
+    evidence: EvidenceOpt = None,
+    case: CaseOpt = None,
+    as_json: JsonOpt = False,
+) -> None:
+    """Recover deleted and unindexed footage, and write the coverage map (FR-41..FR-46)."""
+    requested = tuple(t.strip().upper() for t in tiers.split(",") if t.strip())
+    with _open(case) as store:
+        evidence_id = evidence_service.default_evidence_id(store, evidence)
+        summary = recover_service.recover(store, evidence_id, requested, budget_s=budget)
+    if as_json:
+        _emit_json(summary.to_json())
+        return
+
+    typer.echo(f"{summary.evidence_id}: ran {', '.join(summary.tiers_run) or 'nothing'}"
+               f" — {summary.added} new recording(s)")
+    for tier, count in sorted(summary.by_tier.items()):
+        typer.echo(f"  {tier}: {count}")
+    if summary.duplicates_merged:
+        typer.echo(f"  {summary.duplicates_merged} overlapping result(s) merged, "
+                   "highest tier kept (FR-44)")
+    for skipped in summary.skipped:
+        typer.echo(f"  skipped {skipped}")
+
+    gain = summary.gain_pct
+    if gain is not None:
+        typer.echo(f"  recovered {summary.recovered_minutes:.1f} min against "
+                   f"{summary.t1_minutes:.1f} min at T1 — {gain}% (AC-06 target 30%)")
+    elif summary.added:
+        typer.echo("  yield in minutes not measurable: no T1 baseline with times on "
+                   "this evidence")
+    for note in summary.notes:
+        typer.echo(f"  note: {note}")
+
+
+@app.command("coverage")
+def coverage_cmd(
+    evidence: EvidenceOpt = None, case: CaseOpt = None, as_json: JsonOpt = False
+) -> None:
+    """Show the byte-level coverage map — including what could not be explained (FR-29)."""
+    with _open(case) as store:
+        evidence_id = evidence_service.default_evidence_id(store, evidence)
+        rows = recover_service.coverage_rows(store, evidence_id)
+    if as_json:
+        _emit_json(rows)
+        return
+    if not rows:
+        typer.echo(f"{evidence_id}: no coverage map yet — run 'spectra recover'")
+        return
+
+    totals: dict[str, int] = {}
+    for row in rows:
+        totals[row["bucket"]] = totals.get(row["bucket"], 0) + row["length"]
+    total = sum(totals.values())
+    typer.echo(f"{evidence_id}: {len(rows)} run(s) over {total} bytes")
+    for bucket in ("structural", "parsed", "carved", "unreadable", "unaccounted"):
+        size = totals.get(bucket, 0)
+        pct = (100.0 * size / total) if total else 0.0
+        typer.echo(f"  {bucket:<12} {size:>14,} bytes  {pct:5.1f}%")
+    if totals.get("unaccounted"):
+        typer.echo("  unaccounted bytes are a finding: data the tool could not explain "
+                   "(report §7, FR-81)")
 
 
 @list_app.command("recordings")
