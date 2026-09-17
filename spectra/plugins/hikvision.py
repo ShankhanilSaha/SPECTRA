@@ -44,11 +44,12 @@ the plugin refuses rather than guesses whenever the bytes do not match.
 backup, uses whichever validates, and records which one it used. Divergence between them
 is not silently resolved — it is a reportable finding (doc 4 §4.2).
 
-**There is no delete operation.** Initialisation rewrites the master sector, zeroes the
-logs and resets the trees; every data block survives. So a freed entry is rarer here than
-on a ring-allocating family, and the yield at T2 is correspondingly lower — the recovery
-that matters on Hikvision comes from T3 carving plus comparing frame times against the
-volume initialisation time (doc 4 §4.1).
+**Freed entries still need validating.** A freed entry is not evidence that its block
+survived — HDD initialisation and expiry settings do remove footage, and a lagging backup
+HIKBTREE can carry entries the primary has already released. So `enumerate()` reports what
+the index says and `recover/orphans.py` decides what to trust, exactly as it does for any
+other family. How much T2 actually yields here is an open question for hardware (doc 4 §12
+rows 1-2), not something this plugin asserts.
 
 **Per-frame time and channel are not in the PS layer.** Recording time comes from the
 index entry; the payload carries no dependable per-frame stamp at this layout version. So
@@ -399,8 +400,9 @@ class HikvisionPlugin:
                 )
             if in_progress:
                 notes.append(
-                    "end time is the in-progress sentinel 0x7FFFFFFF: the recorder was "
-                    "still writing this block, not a 2038 timestamp"
+                    "end time is 0x7FFFFFFF, reported [R] as the in-progress sentinel "
+                    "(recorder still writing). Treated as 'end unknown' rather than "
+                    "rendered as 2038-01-19; unverified until a Tier R image confirms it"
                 )
             yield Recording(
                 channel=field["channel"],
