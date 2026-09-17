@@ -23,6 +23,7 @@ from spectra.ml.motion import MotionConfig
 from spectra.report import certificate, findings
 from spectra.services import ServiceError
 from spectra.services import analytics as analytics_service
+from spectra.services import custody as custody_service
 from spectra.services import evidence as evidence_service
 from spectra.services import export as export_service
 from spectra.services import identify as identify_service
@@ -188,6 +189,99 @@ def _print_verify(result: Any, as_json: bool) -> None:
     for problem in result.problems:
         typer.echo(f"FAIL: {problem}")
     typer.echo("VERIFIED" if result.ok else "VERIFICATION FAILED")
+
+
+@case_app.command("custody")
+def case_custody(
+    from_holder: Annotated[str, typer.Option("--from", help="Who released the item.")],
+    to_holder: Annotated[str, typer.Option("--to", help="Who received it.")],
+    purpose: Annotated[str, typer.Option("--purpose", help="Why it moved.")],
+    evidence: EvidenceOpt = None,
+    seal: Annotated[str, typer.Option("--seal", help="Seal number (Form F-2).")] = "",
+    seal_intact: Annotated[bool | None, typer.Option(
+        "--seal-intact/--seal-broken",
+        help="Whether the seal was intact on receipt. Omit if the item was not sealed — "
+             "that is a different fact from a broken seal.")] = None,
+    signature: Annotated[str, typer.Option("--signature", help="Signature reference.")] = "",
+    note: Annotated[str, typer.Option("--note")] = "",
+    case: CaseOpt = None,
+) -> None:
+    """Record a physical custody transfer (FR-73, SOP Form F-2)."""
+    with _open(case) as store:
+        ev_id = evidence_service.default_evidence_id(store, evidence)
+        entry = custody_service.record_transfer(
+            store, ev_id, from_holder=from_holder, to_holder=to_holder, purpose=purpose,
+            seal_number=seal, seal_intact=seal_intact, signature_ref=signature, note=note,
+        )
+        breaks = custody_service.chain_breaks(store, ev_id)
+    typer.echo(f"custody entry {entry.seq} recorded for {ev_id}")
+    typer.echo(f"  {entry.from_holder} -> {entry.to_holder}   {entry.purpose}")
+    seal_text = {None: "no seal recorded", True: "seal intact", False: "SEAL BROKEN"}[
+        entry.seal_intact
+    ]
+    typer.echo(f"  {seal_text}" + (f" ({entry.seal_number})" if entry.seal_number else ""))
+    for gap in breaks:
+        typer.echo(f"  chain gap: {gap}", err=True)
+
+
+@case_app.command("attach")
+def case_attach(
+    file: Annotated[Path, typer.Option("--file", help="Document to attach and hash.")],
+    kind: Annotated[str, typer.Option(
+        "--kind", help="One of: " + ", ".join(custody_service.ATTACHMENT_KINDS))],
+    description: Annotated[str, typer.Option("--description")] = "",
+    provided_by: Annotated[str, typer.Option("--provided-by")] = "",
+    evidence: EvidenceOpt = None,
+    case: CaseOpt = None,
+) -> None:
+    """Attach and hash an external case document (FR-74).
+
+    The panchnama, the BNSS s. 105 seizure recording, authorisation letters. Hashed on the
+    way in and never modified, so their integrity is checkable exactly like the image's.
+    """
+    with _open(case) as store:
+        ev_id = evidence if evidence else None
+        ref = custody_service.attach_document(
+            store, file, kind, description=description, evidence_id=ev_id,
+            provided_by=provided_by,
+        )
+    typer.echo(f"attached {ref.id}  {ref.kind}  {ref.filename}")
+    typer.echo(f"  sha256 {ref.sha256}")
+    typer.echo(f"  size   {ref.size_bytes} bytes")
+    if ref.statutory_ref:
+        typer.echo(f"  under  {ref.statutory_ref}")
+
+
+@case_app.command("chain")
+def case_chain(evidence: EvidenceOpt = None, case: CaseOpt = None,
+               as_json: JsonOpt = False) -> None:
+    """Show the custody chain and attached documents for an evidence item."""
+    with _open(case) as store:
+        ev_id = evidence_service.default_evidence_id(store, evidence)
+        entries = custody_service.custody_entries(store, ev_id)
+        docs = custody_service.attachments(store, ev_id)
+        docs += [d for d in custody_service.attachments(store, None)
+                 if d.id not in {x.id for x in docs}]
+        breaks = custody_service.chain_breaks(store, ev_id)
+    if as_json:
+        _emit_json({"evidence_id": ev_id, "custody": [e.to_json() for e in entries],
+                    "attachments": [d.to_json() for d in docs], "chain_breaks": breaks})
+        return
+    typer.echo(f"custody chain for {ev_id}")
+    if not entries:
+        typer.echo("  (no transfers recorded — the chain is not established)")
+    for entry in entries:
+        seal = {None: "unsealed", True: "sealed/intact", False: "SEAL BROKEN"}[
+            entry.seal_intact
+        ]
+        typer.echo(f"  {entry.seq:>3}  {entry.ts_utc}  {entry.from_holder} -> "
+                   f"{entry.to_holder}  [{seal}]  {entry.purpose}")
+    for gap in breaks:
+        typer.echo(f"  GAP: {gap}")
+    typer.echo("")
+    typer.echo(f"attached documents ({len(docs)})")
+    for doc in docs:
+        typer.echo(f"  {doc.id}  {doc.kind:<16} {doc.filename}  {doc.sha256[:16]}...")
 
 
 # -- import ---------------------------------------------------------------------------------

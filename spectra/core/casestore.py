@@ -36,7 +36,7 @@ import spectra
 from spectra.core.audit import AuditChain, VerifyResult, utc_now
 from spectra.core.hashing import Digests, Hasher, hash_case_file
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DB_NAME = "case.db"
 MANIFEST_NAME = "case.manifest.json"
 MANIFEST_FORMAT = "spectra-case-manifest/1"
@@ -67,7 +67,13 @@ CREATE TABLE identification (
 CREATE TABLE disk_layout (
   evidence_id TEXT PRIMARY KEY REFERENCES evidence,
   block_size INTEGER, block_count INTEGER, blocks_used INTEGER,
-  index_extents_json TEXT, log_extents_json TEXT, format_utc TEXT,
+  index_extents_json TEXT, log_extents_json TEXT,
+  -- The volume format/initialise time, held in the same three layers as `recording`.
+  -- `format_utc` stays NULL until an offset is established: the recorder's clock is the
+  -- least trustworthy thing on the disk, and a column named `_utc` must never carry a
+  -- device-local value (FR-53, rule 2).
+  format_t_device_raw TEXT, format_t_device_encoding TEXT, format_t_local TEXT,
+  format_utc TEXT,
   family TEXT, layout_version TEXT, note TEXT
 );
 CREATE TABLE recording (
@@ -106,7 +112,21 @@ CREATE TABLE annotation (
 );
 CREATE TABLE custody (
   seq INTEGER PRIMARY KEY, evidence_id TEXT, ts_utc TEXT,
-  from_holder TEXT, to_holder TEXT, purpose TEXT, signature_ref TEXT
+  from_holder TEXT, to_holder TEXT, purpose TEXT, signature_ref TEXT,
+  -- Form F-2 records a seal number and whether the seal was intact on receipt. A transfer
+  -- without that is a transfer nobody can vouch for, so both travel with the row.
+  -- `seal_intact` is NULL when the item was never sealed, 0 when it was found broken:
+  -- those are different facts and must not collapse into one another.
+  seal_number TEXT, seal_intact INTEGER, note TEXT
+);
+-- Documents that arrived from outside: the panchnama, the BNSS s. 105 seizure recording,
+-- authorisation letters (FR-74). Kept apart from `artifact` because that table is what
+-- SPECTRA produced; listing an officer's panchnama there would present it as tool output.
+-- The bytes live in the same content-addressed store, referenced by sha256.
+CREATE TABLE attachment (
+  id TEXT PRIMARY KEY, case_id TEXT REFERENCES case_meta, evidence_id TEXT,
+  kind TEXT, description TEXT, provided_by TEXT, statutory_ref TEXT,
+  sha256 TEXT, md5 TEXT, size_bytes INTEGER, filename TEXT, attached_utc TEXT
 );
 """
 

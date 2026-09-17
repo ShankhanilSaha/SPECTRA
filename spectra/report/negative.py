@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from spectra.core.casestore import CaseStore
+from spectra.services import custody as custody_service
 
 Severity = Literal["info", "attention", "serious"]
 
@@ -83,6 +84,7 @@ def negative_findings(store: CaseStore) -> list[Finding]:
     out += _identification_findings(store)
     out += _recording_findings(store)
     out += _process_findings(store)
+    out += _custody_findings(store)
     out.sort(key=lambda f: (_SEVERITY_ORDER[f.severity], f.code, f.evidence_id or ""))
     return out
 
@@ -390,6 +392,164 @@ def _process_findings(store: CaseStore) -> list[Finding]:
                         "absence."
                     ),
                     evidence_id=evidence_id,
+                )
+            )
+    return out
+
+
+# --- what the paper chain says ----------------------------------------------------------
+
+
+#: What a case of each provenance class would normally be accompanied by (FR-74).
+#:
+#: The expectation follows what actually happened, not what would be nice to have:
+#:
+#: **A and B** are physical images of a seized recorder. A seizure produces a memo under
+#: BNSS s. 103, is recorded audio-visually under s. 105, and rests on an authorisation
+#: under s. 94 or s. 185. All three should exist.
+#:
+#: **C** is a live logical acquisition: data taken from premises, usually without the
+#: recorder being carried away. A memo and an authorisation still apply. The s. 105
+#: recording is *not* asserted, because whether the obligation attaches turns on whether
+#: this was a search — a question the tool cannot answer from the case file, and the wrong
+#: place to guess.
+#:
+#: **D** is files handed over by a third party. Nothing was seized by the team, so only
+#: the authorisation to receive and examine them is expected. Class D's real weakness —
+#: that the original storage was never examined — is already a separate finding.
+#:
+#: An unrecognised class expects nothing. The cost of over-asking is not neutral: a
+#: section that routinely demands documents a case could not have is a section examiners
+#: learn to skim, and rule 11's whole value is that this section gets read.
+_EXPECTED_DOCUMENTS: dict[str, tuple[str, ...]] = {
+    "A": ("panchnama", "seizure_video", "authorisation"),
+    "B": ("panchnama", "seizure_video", "authorisation"),
+    "C": ("panchnama", "authorisation"),
+    "D": ("authorisation",),
+}
+
+
+def _expected_documents(provenance_class: str) -> tuple[str, ...]:
+    """Which attachment kinds a case of this provenance class should normally carry.
+
+    Returns kinds from `services.custody.ATTACHMENT_KINDS`. An empty tuple means the tool
+    makes no expectation for that class and raises no finding about missing documents.
+    """
+    return _EXPECTED_DOCUMENTS.get(provenance_class.strip().upper(), ())
+
+
+def _custody_findings(store: CaseStore) -> list[Finding]:
+    """Gaps in the chain that happened before and around SPECTRA (FR-73, FR-74).
+
+    Everything here is about the paper trail, not the bytes. It is in the negative-findings
+    section for the same reason the coverage map is: the examiner may not notice an absent
+    document, and the defence expert certainly will.
+    """
+    out: list[Finding] = []
+    evidence = _rows(
+        store, "SELECT id, provenance_class, label FROM evidence ORDER BY id"
+    )
+    transfers = _rows(store, "SELECT * FROM custody ORDER BY seq")
+    by_evidence: dict[str, list[dict[str, Any]]] = {}
+    for row in transfers:
+        by_evidence.setdefault(str(row["evidence_id"]), []).append(row)
+
+    attachments = _rows(store, "SELECT evidence_id, kind FROM attachment ORDER BY id")
+    kinds_for: dict[str, set[str]] = {}
+    for row in attachments:
+        # An attachment with no evidence_id belongs to the case as a whole, so it counts
+        # for every item: one authorisation commonly covers a whole seizure.
+        key = str(row["evidence_id"]) if row["evidence_id"] else "*"
+        kinds_for.setdefault(key, set()).add(str(row["kind"]))
+    case_wide = kinds_for.get("*", set())
+
+    for row in evidence:
+        evidence_id = str(row["id"])
+        entries = by_evidence.get(evidence_id, [])
+
+        if not entries:
+            out.append(
+                Finding(
+                    code="NF-NO-CUSTODY",
+                    severity="serious",
+                    title="No chain-of-custody record",
+                    detail=(
+                        "No physical custody transfer has been recorded for this item, so "
+                        "the case cannot show who held it between seizure and examination. "
+                        "The analysis below is unaffected, but the chain of custody is not "
+                        "established by this case file (FR-73, SOP Form F-2)."
+                    ),
+                    evidence_id=evidence_id,
+                )
+            )
+        else:
+            broken = [e for e in entries if e["seal_intact"] == 0]
+            if broken:
+                out.append(
+                    Finding(
+                        code="NF-SEAL-BROKEN",
+                        severity="serious",
+                        title="A seal was recorded as not intact",
+                        detail=(
+                            "A custody transfer records the seal as broken on receipt. "
+                            "Everything after that transfer rests on a container that was "
+                            "open to interference, whatever the cause."
+                        ),
+                        evidence_id=evidence_id,
+                        numbers={"transfers": len(entries), "broken_seals": len(broken)},
+                    )
+                )
+            unsealed = [e for e in entries if e["seal_intact"] is None]
+            if unsealed:
+                out.append(
+                    Finding(
+                        code="NF-NO-SEAL",
+                        severity="attention",
+                        title="Custody transfers with no seal recorded",
+                        detail=(
+                            "One or more transfers record no seal. An unsealed transfer is "
+                            "not necessarily improper, but it cannot be shown to have "
+                            "preserved the item, so it is reported rather than assumed."
+                        ),
+                        evidence_id=evidence_id,
+                        numbers={"transfers": len(entries), "without_seal": len(unsealed)},
+                    )
+                )
+            breaks = custody_service.chain_breaks(store, evidence_id)
+            if breaks:
+                out.append(
+                    Finding(
+                        code="NF-CUSTODY-GAP",
+                        severity="serious",
+                        title="The custody chain does not join up",
+                        detail=(
+                            "A transfer is released by someone other than the person the "
+                            "previous transfer left the item with, so at least one movement "
+                            "is unrecorded: " + "; ".join(breaks)
+                        ),
+                        evidence_id=evidence_id,
+                        numbers={"gaps": len(breaks)},
+                    )
+                )
+
+        held = kinds_for.get(evidence_id, set()) | case_wide
+        expected = _expected_documents(str(row["provenance_class"] or "")) or ()
+        missing = sorted(set(expected) - held)
+        if missing:
+            out.append(
+                Finding(
+                    code="NF-MISSING-DOCUMENTS",
+                    severity="attention",
+                    title="Expected case documents are not attached",
+                    detail=(
+                        "A case of provenance class "
+                        f"{row['provenance_class'] or 'unknown'} would normally be "
+                        "accompanied by: " + ", ".join(missing) + ". They are not in this "
+                        "case file. They may exist on paper; this section reports only "
+                        "what the case can show (FR-74)."
+                    ),
+                    evidence_id=evidence_id,
+                    numbers={"missing": len(missing)},
                 )
             )
     return out

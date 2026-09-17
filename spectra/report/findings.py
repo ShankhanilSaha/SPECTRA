@@ -33,6 +33,7 @@ from typing import Any
 from spectra.core.audit import canonical_json
 from spectra.core.casestore import SCHEMA_VERSION, CaseStore
 from spectra.report.negative import negative_findings, summarise
+from spectra.services import custody as custody_service
 
 #: Bumped when the shape of this document changes in a way a consumer would notice.
 #: A reader that does not recognise the version should refuse to interpret the contents
@@ -109,6 +110,7 @@ def build(
         "annotations": _annotations(store),
         "artifacts": _artifacts(store),
         "custody": _custody(store),
+        "attachments": _attachments(store),
         "negative_findings": [f.to_json() for f in findings],
         "negative_summary": summarise(findings),
         "integrity": {
@@ -284,7 +286,24 @@ def _artifacts(store: CaseStore) -> list[dict[str, Any]]:
 
 
 def _custody(store: CaseStore) -> list[dict[str, Any]]:
-    return _rows(store, "SELECT * FROM custody ORDER BY seq")
+    """Transfers, plus where the chain fails to join up.
+
+    `chain_breaks` is emitted per evidence item rather than left for a reader to spot by
+    comparing holder names down the table — that is the check Form F-2 exists to make
+    possible, and a report that prints the rows without running it has only printed rows.
+    """
+    entries = _rows(store, "SELECT * FROM custody ORDER BY seq")
+    breaks: dict[str, list[str]] = {}
+    for ev_id in sorted({str(e["evidence_id"]) for e in entries if e["evidence_id"]}):
+        found = custody_service.chain_breaks(store, ev_id)
+        if found:
+            breaks[ev_id] = found
+    return [{**e, "chain_breaks": breaks.get(str(e["evidence_id"]), [])} for e in entries]
+
+
+def _attachments(store: CaseStore) -> list[dict[str, Any]]:
+    """External case documents (FR-74). Never tool output — see services/custody.py."""
+    return _rows(store, "SELECT * FROM attachment ORDER BY kind, id")
 
 
 # --- serialisation ----------------------------------------------------------------------
