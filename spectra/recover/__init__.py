@@ -18,6 +18,7 @@ from spectra.recover.coverage import (
     claim,
     resolve,
 )
+from spectra.recover.gop import Run, group_hits, reassemble
 from spectra.recover.merge import MergeStats, merge, recording_extents
 from spectra.recover.orphans import OrphanVerdict, validate
 
@@ -29,9 +30,12 @@ __all__ = [
     "CoverageRun",
     "MergeStats",
     "OrphanVerdict",
+    "Run",
     "claim",
+    "group_hits",
     "merge",
     "recording_extents",
+    "reassemble",
     "resolve",
     "scan",
     "validate",
