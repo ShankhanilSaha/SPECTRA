@@ -406,6 +406,21 @@ case file.</p>
 {% endif %}
 
 <h2>9. {{ sections[8] }}</h2>
+{% if doc.time.anomalies %}
+<h3>Contradictions in the recorded times</h3>
+<p>Each entry below is a contradiction in what the recorder wrote down, not a conclusion
+   about why. Every one has more than one available explanation and this tool does not
+   choose between them.</p>
+{% for item in doc.time.anomalies %}
+<div class="finding attention">
+  <div class="sev">{{ item.kind }}{% if item.channel is not none %} &middot; channel
+    {{ item.channel }}{% endif %}</div>
+  <div>{{ item.detail }}</div>
+  <div class="muted">Possible explanations, none established by this evidence alone:
+    {{ item.possible_causes | join('; ') }}.</div>
+</div>
+{% endfor %}
+{% endif %}
 {% if doc.device_events %}
 <table>
   <tr><th>Device time</th><th>Kind</th><th>Detail</th></tr>

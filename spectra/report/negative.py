@@ -30,6 +30,7 @@ from typing import Any, Literal
 
 from spectra.core.casestore import CaseStore
 from spectra.services import custody as custody_service
+from spectra.services import timeline as timeline_service
 
 Severity = Literal["info", "attention", "serious"]
 
@@ -85,6 +86,7 @@ def negative_findings(store: CaseStore) -> list[Finding]:
     out += _recording_findings(store)
     out += _process_findings(store)
     out += _custody_findings(store)
+    out += _anomaly_findings(store)
     out.sort(key=lambda f: (_SEVERITY_ORDER[f.severity], f.code, f.evidence_id or ""))
     return out
 
@@ -550,6 +552,38 @@ def _custody_findings(store: CaseStore) -> list[Finding]:
                     ),
                     evidence_id=evidence_id,
                     numbers={"missing": len(missing)},
+                )
+            )
+    return out
+
+
+def _anomaly_findings(store: CaseStore) -> list[Finding]:
+    """Contradictions in the recorder's own timestamps (FR-55).
+
+    These belong in the negative-findings section rather than the timeline section because
+    each one narrows what the timeline is able to assert. A reader who takes section 9 at
+    face value without seeing these has been misled by omission.
+
+    The severity is `attention`, never `serious`: an anomaly is a contradiction to explain,
+    not a conclusion, and every one of them has an innocent explanation available.
+    """
+    out: list[Finding] = []
+    for row in _rows(store, "SELECT id FROM evidence ORDER BY id"):
+        evidence_id = str(row["id"])
+        found = timeline_service.time_anomalies(store, evidence_id)
+        for anomaly in found:
+            out.append(
+                Finding(
+                    code=f"NF-TIME-{anomaly.kind.upper().replace('_', '-')}",
+                    severity="attention",
+                    title="The recorded times contradict each other",
+                    detail=(
+                        anomaly.detail
+                        + " Possible explanations, none established by this evidence alone: "
+                        + "; ".join(anomaly.possible_causes) + "."
+                    ),
+                    evidence_id=evidence_id,
+                    numbers=anomaly.numbers,
                 )
             )
     return out

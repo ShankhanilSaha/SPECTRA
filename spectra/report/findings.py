@@ -34,6 +34,7 @@ from spectra.core.audit import canonical_json
 from spectra.core.casestore import SCHEMA_VERSION, CaseStore
 from spectra.report.negative import negative_findings, summarise
 from spectra.services import custody as custody_service
+from spectra.services import timeline as timeline_service
 
 #: Bumped when the shape of this document changes in a way a consumer would notice.
 #: A reader that does not recognise the version should refuse to interpret the contents
@@ -251,10 +252,20 @@ def _time(store: CaseStore) -> dict[str, Any]:
     return {
         "observations": observations,
         "methods_used": methods,
+        "anomalies": _anomalies(store),
         "absolute_established": with_ref > 0,
         "recordings_total": total,
         "recordings_with_reference_time": with_ref,
     }
+
+
+def _anomalies(store: CaseStore) -> list[dict[str, Any]]:
+    """Contradictions in the recorded times (FR-55). Observations, never conclusions."""
+    out = []
+    for row in _rows(store, "SELECT id FROM evidence ORDER BY id"):
+        for anomaly in timeline_service.time_anomalies(store, str(row["id"])):
+            out.append({"evidence_id": str(row["id"]), **anomaly.to_json()})
+    return out
 
 
 def _device_events(store: CaseStore) -> list[dict[str, Any]]:
