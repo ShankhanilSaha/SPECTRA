@@ -33,6 +33,7 @@ from spectra.core.casestore import CaseStore
 from spectra.core.hashing import hash_case_file
 from spectra.report import certificate as cert
 from spectra.report import findings as fnd
+from spectra.report import generator as gen
 from spectra.services import ServiceError
 from spectra.services.evidence import evidence_row
 
@@ -65,6 +66,68 @@ def generate_findings(
         }
     store.write_manifest()
     return doc, digest
+
+
+
+def generate_report(
+    store: CaseStore,
+    *,
+    out_dir: Path,
+    branding: gen.Branding | None = None,
+    tool_version: str = "",
+    pdf: bool = True,
+) -> dict[str, Any]:
+    """Build findings, render the twelve-section report, and store both (FR-80, AC-09).
+
+    Returns what was written and what was not. `pdf=True` asks for a PDF; if WeasyPrint is
+    absent the HTML is still produced and `pdf_error` says why the PDF is missing, because
+    a forensic tool may not hand over a lesser artefact than the one requested (rule 7).
+    """
+    doc, digest = generate_findings(store, tool_versions={"spectra": tool_version}
+                                    if tool_version else None)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    with store.audit.operation("report.generate", params={"findings_digest": digest}) as op:
+        assert op.start_record is not None
+        html_text = gen.render_html(doc, digest, branding=branding,
+                                    tool_version=tool_version)
+        html_path = out_dir / f"report-{store.case_id}.html"
+        html_path.write_text(html_text, encoding="utf-8")
+        ref = store.add_artifact_file(html_path, "report",
+                                      created_utc=op.start_record.ts_utc,
+                                      source_record_seq=op.start_record.seq)
+
+        pdf_path: Path | None = None
+        pdf_error = ""
+        if pdf:
+            try:
+                pdf_path = gen.render_pdf(html_text, out_dir / f"report-{store.case_id}.pdf")
+                store.add_artifact_file(pdf_path, "report",
+                                        created_utc=op.start_record.ts_utc,
+                                        source_record_seq=op.start_record.seq)
+            except gen.PdfUnavailable as exc:
+                pdf_error = str(exc)
+
+        op.hash_after = ref.sha256
+        op.result_params = {
+            "findings_digest": digest,
+            "conclusions_digest": doc["conclusions_digest"],
+            "report_sha256": ref.sha256,
+            "pdf_written": pdf_path is not None,
+            "pdf_error": pdf_error,
+            "negative_findings": doc["negative_summary"]["total"],
+        }
+    store.write_manifest()
+    return {
+        "findings_digest": digest,
+        "conclusions_digest": doc["conclusions_digest"],
+        "html": html_path,
+        "html_sha256": ref.sha256,
+        "pdf": pdf_path,
+        "pdf_error": pdf_error,
+        "negative_summary": doc["negative_summary"],
+        "audit_ok": doc["integrity"]["audit_ok"],
+    }
 
 
 def _stored_row(store: CaseStore, sha256: str) -> dict[str, Any] | None:

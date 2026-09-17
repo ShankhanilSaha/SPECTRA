@@ -21,6 +21,7 @@ from spectra.core.source import SourceError
 from spectra.identify.engine import IdentificationResult, IdentifyError
 from spectra.ml.motion import MotionConfig
 from spectra.report import certificate, findings
+from spectra.report import generator as report_generator
 from spectra.services import ServiceError
 from spectra.services import analytics as analytics_service
 from spectra.services import custody as custody_service
@@ -778,6 +779,43 @@ def report_certificate(
         typer.echo(f"warning: {warning}", err=True)
     for path in written:
         typer.echo(f"written         {path}")
+
+
+@report_app.command("generate")
+def report_generate(
+    out: Annotated[Path, typer.Option("--out", help="Directory for the report files.")],
+    case: CaseOpt = None,
+    agency: Annotated[str, typer.Option("--agency", help="Agency name for the "
+                                        "letterhead (FR-87).")] = "",
+    letterhead: Annotated[str, typer.Option("--letterhead")] = "",
+    footer: Annotated[str, typer.Option("--footer")] = "",
+    no_pdf: Annotated[bool, typer.Option("--no-pdf", help="Write the HTML only.")] = False,
+) -> None:
+    """Render the twelve-section examination report (FR-80, AC-09)."""
+    branding = report_generator.Branding(
+        agency_name=agency, letterhead_line=letterhead, footer_note=footer
+    )
+    with _open(case) as store:
+        result = report_service.generate_report(
+            store, out_dir=out, branding=branding,
+            tool_version=spectra.__version__, pdf=not no_pdf,
+        )
+    typer.echo(f"report        {result['html']}")
+    typer.echo(f"  sha256      {result['html_sha256']}")
+    if result["pdf"]:
+        typer.echo(f"pdf           {result['pdf']}")
+    typer.echo(f"findings      sha256 {result['findings_digest']}")
+    typer.echo(f"conclusions   sha256 {result['conclusions_digest']}")
+    summary = result["negative_summary"]
+    typer.echo(f"section 7     {summary['total']} negative finding(s): "
+               f"{summary['by_severity']['serious']} serious, "
+               f"{summary['by_severity']['attention']} attention, "
+               f"{summary['by_severity']['info']} info")
+    if not result["audit_ok"]:
+        typer.echo("WARNING: the audit chain does not verify; the report says so on its "
+                   "first page", err=True)
+    if result["pdf_error"]:
+        typer.echo(f"note: {result['pdf_error']}", err=True)
 
 
 @app.command("version")
