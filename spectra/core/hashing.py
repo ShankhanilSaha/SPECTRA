@@ -1,7 +1,11 @@
-"""`Hasher` — MD5 + SHA-256 in one pass (doc 3 §3.2, FR-11, FR-32, FR-82).
+"""`Hasher` — MD5 + SHA-1 + SHA-256 in one pass (doc 3 §3.2, FR-11, FR-32, FR-82).
 
-SHA-256 is the integrity assertion. MD5 is computed only because departmental records
-and the BSA s. 63(4) certificate format still reference it; reports say so in words.
+SHA-256 is the integrity assertion. MD5 and SHA-1 are computed because the BSA s. 63(4)
+certificate schedule names exactly those three algorithms, and a certificate cannot tick
+a box for a digest the tool never calculated. Reports say in words which one is relied on.
+
+Note the two sources differ and the union satisfies both: the problem statement asks for
+"MD5 and SHA-256"; the statute's schedule lists SHA1, SHA256 and MD5 (CLAUDE.md §17 item 1).
 """
 
 from __future__ import annotations
@@ -17,28 +21,44 @@ from spectra.core.source import MIB, EvidenceSource
 @dataclass(frozen=True, slots=True)
 class Digests:
     md5: str
+    sha1: str
     sha256: str
     size: int
 
     def to_json(self) -> dict[str, object]:
-        return {"md5": self.md5, "sha256": self.sha256, "size": self.size}
+        return {"md5": self.md5, "sha1": self.sha1, "sha256": self.sha256,
+                "size": self.size}
 
 
 class Hasher:
-    """Dual digest over a single stream of updates."""
+    """MD5, SHA-1 and SHA-256 over a single stream of updates.
+
+    SHA-256 is the integrity assertion. MD5 is kept because Indian departmental records
+    still cite it. SHA-1 is kept because the BSA s. 63(4) certificate schedule names it
+    alongside the other two, and a certificate cannot tick a box we never computed —
+    the problem statement asks for MD5 and SHA-256, the statute asks for all three, and
+    computing the third costs one more pass over the same bytes (CLAUDE.md §17 item 1).
+    """
 
     def __init__(self) -> None:
         self._md5 = hashlib.md5(usedforsecurity=False)
+        self._sha1 = hashlib.sha1(usedforsecurity=False)
         self._sha256 = hashlib.sha256()
         self._size = 0
 
     def update(self, data: bytes | bytearray | memoryview) -> None:
         self._md5.update(data)
+        self._sha1.update(data)
         self._sha256.update(data)
         self._size += len(data)
 
     def digests(self) -> Digests:
-        return Digests(self._md5.hexdigest(), self._sha256.hexdigest(), self._size)
+        return Digests(
+            self._md5.hexdigest(),
+            self._sha1.hexdigest(),
+            self._sha256.hexdigest(),
+            self._size,
+        )
 
 
 def hash_source(

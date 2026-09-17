@@ -7,6 +7,7 @@ import getpass
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -19,6 +20,7 @@ from spectra.core.media import MediaError, MediaTool, locate_ffmpeg
 from spectra.core.source import SourceError
 from spectra.identify.engine import IdentificationResult, IdentifyError
 from spectra.ml.motion import MotionConfig
+from spectra.report import certificate, findings
 from spectra.services import ServiceError
 from spectra.services import analytics as analytics_service
 from spectra.services import evidence as evidence_service
@@ -26,6 +28,7 @@ from spectra.services import export as export_service
 from spectra.services import identify as identify_service
 from spectra.services import parse as parse_service
 from spectra.services import recover as recover_service
+from spectra.services import report as report_service
 from spectra.services import timeline as timeline_service
 
 app = typer.Typer(no_args_is_help=True, add_completion=False,
@@ -38,6 +41,8 @@ export_app = typer.Typer(no_args_is_help=True, help="Export evidence clips.")
 verify_app = typer.Typer(no_args_is_help=True, help="Third-party verification commands.")
 time_app = typer.Typer(no_args_is_help=True,
                        help="Clock-offset evidence and time normalisation (FR-50..FR-53).")
+report_app = typer.Typer(no_args_is_help=True,
+                         help="Findings JSON and the BSA s. 63(4) certificate.")
 analyze_app = typer.Typer(no_args_is_help=True,
                           help="Run offline ML and motion gating analysis (FR-90..FR-97).")
 app.add_typer(case_app, name="case")
@@ -48,6 +53,7 @@ app.add_typer(list_app, name="list")
 app.add_typer(export_app, name="export")
 app.add_typer(verify_app, name="verify")
 app.add_typer(analyze_app, name="analyze")
+app.add_typer(report_app, name="report")
 
 HANDLED = (CaseError, ServiceError, SourceError, IdentifyError, MediaError, CanonicalisationError)
 
@@ -586,6 +592,98 @@ def verify_chain(case: Annotated[Path, typer.Option("--case")], as_json: JsonOpt
     _print_verify(result, as_json)
     if not result.ok:
         raise typer.Exit(1)
+
+
+# -- report ---------------------------------------------------------------------------------
+
+@report_app.command("findings")
+def report_findings(
+    case: CaseOpt = None,
+    as_json: JsonOpt = False,
+    out: Annotated[Path | None, typer.Option(
+        "--out", help="Also write findings.json here (it is always stored in the case).")] = None,
+) -> None:
+    """Build the deterministic findings document the report renders from (FR-86, AC-11)."""
+    with _open(case) as store:
+        doc, digest = report_service.generate_findings(store)
+    if out:
+        out.write_bytes(findings.serialise(doc))
+    if as_json:
+        _emit_json(doc)
+        return
+    typer.echo(f"findings.json      sha256 {digest}")
+    typer.echo(f"conclusions        sha256 {doc['conclusions_digest']}")
+    typer.echo("  the conclusions digest covers what was found on the disk, and is "
+               "what another\n  examiner reproduces; the file digest also covers "
+               "this examination's own history")
+    typer.echo(f"negative findings  {doc['negative_summary']['total']}")
+    for severity, count in sorted(doc["negative_summary"]["by_severity"].items()):
+        typer.echo(f"  {severity:<10} {count}")
+    if not doc["integrity"]["audit_ok"]:
+        typer.echo(
+            f"WARNING: audit chain broken at seq {doc['integrity']['audit_broken_at_seq']}",
+            err=True,
+        )
+    if out:
+        typer.echo(f"written            {out}")
+
+
+@report_app.command("certificate")
+def report_certificate(
+    evidence: EvidenceOpt = None,
+    case: CaseOpt = None,
+    instance: Annotated[int, typer.Option(
+        "--instance",
+        help="Submission number. s. 63(4) requires a certificate at each instance.")] = 1,
+    instituted: Annotated[str | None, typer.Option(
+        "--instituted-on",
+        help="Date the proceeding was instituted (YYYY-MM-DD). Before 2024-07-01 selects "
+             "the IEA s. 65B(4) form.")] = None,
+    control: Annotated[str | None, typer.Option(
+        "--control",
+        help="How the device was held: Owned,Maintained,Managed,Operated.")] = None,
+    out: Annotated[Path | None, typer.Option(
+        "--out", help="Directory to write the certificate and its hash report into.")] = None,
+    as_json: JsonOpt = False,
+) -> None:
+    """Pre-fill the BSA s. 63(4) certificate and its mandatory hash enclosure (FR-83).
+
+    Signatures are left blank: the certificate is a sworn statement by two named people.
+    """
+    modes = tuple(m.strip() for m in (control or "").split(",") if m.strip())
+    when = datetime.strptime(instituted, "%Y-%m-%d") if instituted else None
+    with _open(case) as store:
+        ev_id = evidence_service.default_evidence_id(store, evidence)
+        cert, enclosure, warnings = report_service.generate_certificate(
+            store, ev_id, instance=instance, instituted_on=when, control_modes=modes,
+        )
+        written = (
+            report_service.write_certificate_files(store, cert, enclosure, out) if out else []
+        )
+    if as_json:
+        _emit_json(
+            {"certificate": cert.to_json(), "hash_report": enclosure, "warnings": warnings}
+        )
+        return
+    typer.echo(cert.heading)
+    typer.echo(cert.authority)
+    typer.echo(f"case            {cert.case_id}   instance {cert.instance}")
+    typer.echo(f"record          {cert.record_description}")
+    typer.echo(f"source type     {cert.device.source_type}")
+    typer.echo(f"hash boxes      {', '.join(cert.hashes.ticked) or 'none'}")
+    typer.echo(f"enclosure       {cert.hash_report_ref}")
+    held = certificate.withheld(enclosure)
+    if held:
+        typer.echo("")
+        typer.echo("WITHHELD FROM TENDER (disclosed on the form):")
+        for row in held:
+            typer.echo(f"  {row['kind']}  {row['artefact']}")
+    for part in cert.unsigned:
+        typer.echo(f"UNSIGNED: {part}")
+    for warning in warnings:
+        typer.echo(f"warning: {warning}", err=True)
+    for path in written:
+        typer.echo(f"written         {path}")
 
 
 @app.command("version")
