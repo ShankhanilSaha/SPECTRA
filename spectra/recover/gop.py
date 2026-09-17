@@ -1,4 +1,4 @@
-"""T3 reassembly — validated hits to playable runs (doc 3 §7.2, FR-42, FR-45).
+"""T3/T4 reassembly — validated hits to playable runs (doc 3 §7.2, FR-42, FR-43, FR-45).
 
 `carver.scan()` finds structures. This turns them into `Recording`s, and the difference
 between the two is where carving usually goes wrong: a pile of frame offsets is not
@@ -18,6 +18,10 @@ Three rules do the work:
 - **Confidence follows what the container actually carried**, on the fixed ladder in
   doc 3 §7.2. A run with no recoverable time scores 0.4 and is labelled *time unknown* —
   it is placed in physical order and never given an inferred time (FR-45).
+- **A run never spans an unreadable hole.** Pass `unreadable` and every candidate span
+  is cut at each bad-sector run, so each survivable piece becomes its own clip (T4,
+  FR-43). One long clip with an invisible hole in the middle is the failure this
+  prevents, and it is why T4 is a tier rather than a flag.
 
 Vendor-free: everything here reads `Frame` fields that the contract guarantees, and asks
 the plugin for frames. It has no idea which family it is working on.
@@ -30,7 +34,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from spectra.core.models import Codec, DeviceTime, Extent, Recording
+from spectra.core.models import Codec, DeviceTime, Extent, Recording, RecoveryTier
 from spectra.core.source import EvidenceSource
 from spectra.recover.carver import CarveHit
 
@@ -45,6 +49,10 @@ CONF_CHANNEL_AND_TIME = 0.9
 CONF_TIME_ONLY = 0.7
 CONF_NO_TIME = 0.4
 CONF_FRAGMENT = 0.2
+
+#: A disk becomes unreadable a sector at a time, so that is the window used when
+#: deciding whether a bad-sector run bounded a clip.
+_SECTOR = 512
 
 
 class _Plugin(Protocol):
@@ -207,17 +215,25 @@ def reassemble(
     hits: Iterable[CarveHit],
     *,
     max_gap: int = MAX_HIT_GAP,
+    unreadable: Sequence[Extent] = (),
 ) -> Iterator[Recording]:
-    """Turn validated carve hits into T3 recordings, in physical order.
+    """Turn validated carve hits into recordings, in physical order.
 
     Physical order is the ordering that always exists. A run with no recoverable time is
     reported with its position on the disk and no timestamp at all, because inventing one
     from its neighbours is the failure FR-45 names.
+
+    Passing `unreadable` makes this T4 (FR-43): candidate spans are cut at every bad-sector
+    run, so **each survivable span becomes its own clip** and none is reported as spanning
+    bytes that were never read. The alternative — one long clip with an invisible hole in
+    the middle — is the confident-wrong answer, and it is what makes T4 a separate tier
+    rather than a flag on T3.
     """
     position = 0
-    for span in group_hits(hits, max_gap=max_gap):
+    tier: RecoveryTier = "T4" if unreadable else "T3"
+    for span in _subtract(group_hits(hits, max_gap=max_gap), unreadable):
         try:
-            frames = list(plugin.frames(src, span))
+            frames = list(plugin.frames(src, span.extent))
         except (ValueError, OSError):
             continue
         for chain, reason in _split(frames):
@@ -228,15 +244,80 @@ def reassemble(
             if run is None:
                 continue
             position += 1
-            yield _as_recording(run, position)
+            yield _as_recording(run, position, tier, span)
 
 
-def _as_recording(run: Run, position: int) -> Recording:
+@dataclass(frozen=True, slots=True)
+class Span:
+    """A candidate span, and what bounded it. `cut_by` names the bad-sector run if any."""
+
+    extent: Extent
+    cut_by: tuple[Extent, ...] = ()
+
+
+def _subtract(
+    spans: Iterable[Extent], holes: Sequence[Extent]
+) -> Iterator[Span]:
+    """Cut every span at every hole, keeping the survivable pieces and what bounded them.
+
+    `cut_by` records holes that **split** a span and holes that **abut** a surviving piece.
+    Both matter to an examiner and only the first is a cut: by the time this runs, the
+    carve has usually already been restricted to readable ranges and the hits either side
+    of a hole have already grouped separately, so the common case is a clip that simply
+    stops at a bad-sector run. Saying "this clip ends here because the next sectors could
+    not be read" is the difference between a short clip and an unexplained one.
+    """
+    ordered = sorted(holes, key=lambda e: e.offset)
+
+    def adjacent(piece: Extent) -> tuple[Extent, ...]:
+        """Holes within a sector of either end of the piece.
+
+        Exact adjacency is too strict to be useful: a span usually stops a little short of
+        a hole, because the last frame that *would* have crossed into it failed to
+        validate and was dropped. The hole still bounded the clip. A sector is the right
+        window because a sector is the granularity at which a disk becomes unreadable.
+        """
+        return tuple(
+            h
+            for h in ordered
+            if 0 <= h.offset - piece.end <= _SECTOR or 0 <= piece.offset - h.end <= _SECTOR
+        )
+
+    for span in spans:
+        if not ordered:
+            yield Span(span)
+            continue
+        cursor = span.offset
+        pieces: list[tuple[Extent, tuple[Extent, ...]]] = []
+        split_by: list[Extent] = []
+        for hole in ordered:
+            if hole.end <= cursor or hole.offset >= span.end:
+                continue
+            split_by.append(hole)
+            if hole.offset > cursor:
+                pieces.append((Extent(cursor, hole.offset - cursor), (hole,)))
+            cursor = max(cursor, hole.end)
+        if cursor < span.end:
+            pieces.append((Extent(cursor, span.end - cursor), tuple(split_by[-1:])))
+        for piece, direct in pieces:
+            bounding = {*direct, *adjacent(piece)}
+            yield Span(piece, tuple(sorted(bounding, key=lambda e: e.offset)))
+
+
+def _as_recording(
+    run: Run, position: int, tier: RecoveryTier = "T3", span: Span | None = None
+) -> Recording:
     notes = [
-        f"T3 carve, physical position {position} on the image",
+        f"{tier} carve, physical position {position} on the image",
         f"run ended: {run.reason_ended}",
         f"confidence {run.confidence}: {run.confidence_note}",
     ]
+    if span is not None and span.cut_by:
+        where = ", ".join(f"{e.offset}+{e.length}" for e in span.cut_by)
+        notes.append(
+            f"bounded by unreadable sector run(s) at {where}: this clip covers only the "
+            "survivable span, and no bytes across the hole are claimed (FR-43)"
+        )
     if run.trimmed_bytes:
         notes.append(
             f"{run.trimmed_bytes} bytes before the first keyframe were trimmed: they "
@@ -259,9 +340,9 @@ def _as_recording(run: Run, position: int) -> Recording:
         resolution=None,
         fps=None,
         size_bytes=run.extent.length,
-        recovery_tier="T3",
+        recovery_tier=tier,
         confidence=run.confidence,
-        source_note=f"carved run, {run.frame_count} frames, {run.keyframes} keyframe(s)",
+        source_note=f"{tier} carved run, {run.frame_count} frames, {run.keyframes} keyframe(s)",
         frame_count=run.frame_count,
         notes=tuple(notes),
     )

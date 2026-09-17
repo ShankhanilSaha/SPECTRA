@@ -210,7 +210,7 @@ def recover(
                     ran.append("T4")
                     notes.append(
                         f"T4: scan restricted to {len(regions)} readable range(s); "
-                        "unreadable spans are hard boundaries"
+                        f"{len(src.gaps())} unreadable run(s) are hard clip boundaries"
                     )
                 if "T3" in tiers:
                     ran.append("T3")
@@ -220,7 +220,10 @@ def recover(
                     budget_s=budget_s,
                     regions=regions,
                 )
-                found.extend(gop.reassemble(plugin, src, hits))
+                # T4 also cuts each candidate span at every bad-sector run, so a clip
+                # never spans bytes that were not read (FR-43).
+                holes = src.gaps() if "T4" in tiers else ()
+                found.extend(gop.reassemble(plugin, src, hits, unreadable=holes))
 
             kept, stats = merge_recordings(existing, found)
 
@@ -255,7 +258,7 @@ def recover(
         summary = RecoverSummary(
             evidence_id=evidence_id,
             tiers_requested=tuple(tiers),
-            tiers_run=tuple(ran),
+            tiers_run=tuple(sorted(ran)),
             skipped=tuple(skipped),
             added=len(fresh),
             by_tier=by_tier,
