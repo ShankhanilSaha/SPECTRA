@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from spectra.plugins.base import VendorPlugin
 from spectra.plugins.dahua import DahuaPlugin
+from spectra.plugins.hikvision import HikvisionPlugin
 
 REGISTRY: tuple[type[VendorPlugin], ...] = (
     DahuaPlugin,
+    HikvisionPlugin,
 )
 
 
