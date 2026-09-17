@@ -43,7 +43,7 @@ silently diverge.
 | **Product** | **SPECTRA** — Unified Vendor-Agnostic DVR/NVR Forensic Analysis Platform (*Surveillance Platform for Evidence Carving, Timeline Reconstruction & Analysis*) |
 | **Context** | Smart India Hackathon (SIH) 2026 · problem statement **SIH26150** · organisation **NTRO** |
 | **Naming** | One name everywhere: repo/folder `SPECTRA`, product **SPECTRA** in prose, Python package `spectra/`, CLI command `spectra`. Renamed from the earlier working name "SENTINEL" on 2026-09-15 — any remaining occurrence is a leftover to fix |
-| **Status (as of 2026-09-15)** | **Phase 0 built; Phases 1 and 3 partly built** (P1 + P2, §13.1). `spectra/core`, `identify/`, `plugins/{base,registry,dahua}`, `services/`, `cli.py`, pytest suite, CI workflow. Everything else in §6.12 is still *target* layout. Dahua on-disk parsing is blocked on a verified superblock layout (§17 item 11). Check `git log` / `git status` for current state |
+| **Status (as of 2026-09-18)** | **Phases 0, 4, 5 and 7 built; 1 and 3 partly built; 6 partly built.** Added since 2026-09-15: `plugins/hikvision.py` (Phase 4), `recover/` T1–T4 + coverage + merge (Phase 5), `report/` with `findings.json`, the BSA s. 63(4) certificate and the twelve-section report (Phase 7), `timeline/anomalies.py` (FR-55), custody and attachments (FR-73, FR-74). `acquire/` (Phase 2) and `ui/` do not exist yet. Dahua on-disk parsing is still blocked on a verified superblock layout (§17 item 11). Check `git log` / `git status` for current state |
 | **Team** | 6 people, 6 work sections P1–P6 (§12). **Shankhanil (git `ShankhanilSaha`) owns P1 and P2** (§13). Other owners not yet recorded |
 | **SIH stages** | **Pre-selection** = everything built before the team is shortlisted (demo-visible pipeline + deck). **Finals** = everything built after shortlisting, for the grand finale. See §11 |
 | **Dev machine** | Windows 11, PowerShell primary, Git Bash available. Product targets Linux (primary) and Windows 10/11 (NFR-06) — code must be portable |
@@ -1218,9 +1218,12 @@ freeze needs the owner and every consumer to agree.
 
 ### 15.3 Planned CLI (doc 7 §5)
 
-Implemented so far: `case new|open|info|verify`, `import image|files`, `identify [select]`,
-`parse`, `list recordings`, `export clip`, `verify chain`. Everything else below is planned.
-`import image` requires `--provenance A|B|C|D` (§17 item 14).
+Implemented so far: `case new|open|info|verify|custody|attach|chain`,
+`import image|files`, `identify [select]`, `parse`, `coverage`, `recover`, `list recordings`,
+`export clip`, `time set|show`, `timeline`, `gaps`, `analyze motion`,
+`report generate|findings|certificate`, `verify chain`. Everything else below is planned.
+`import image` requires `--provenance A|B|C|D` (§17 item 14). `analyze motion` requires
+FFmpeg and refuses without it (§17 item 18).
 
 ```
 spectra case new|open|info|attach|custody|verify
@@ -1267,9 +1270,13 @@ diverge from the docs.
 
 **Likely doc updates (the diagrams were right):**
 
-1. **SHA-1.** The BSA certificate schedule lists SHA-1 alongside SHA-256 and MD5 (doc 1
-   §5.1 says as much), but FR-11 and doc 3 `Hasher` are MD5 + SHA-256 only. Decide
-   whether `Hasher` computes all three.
+1. **SHA-1 — decided and implemented (2026-09-18).** `Hasher` computes MD5, SHA-1 and
+   SHA-256 in one pass. The s. 63(4) Schedule names exactly those three as checkboxes and
+   a certificate cannot tick a box for a digest the tool never computed. FR-11 and doc 3
+   `Hasher` still say MD5 + SHA-256 and need updating. Note `evidence` and `artifact` were
+   **not** migrated to store SHA-1: the certificate re-hashes each artefact it tenders, and
+   for the evidence image it reprints the stored MD5/SHA-256 and leaves the SHA-1 box
+   blank rather than re-reading a multi-TB image to fill one checkbox.
 2. **E01 can't store SHA-256** (it holds MD5/SHA-1). SHA-256 needs a sidecar manifest,
    and the sidecar's own hash must go into the audit chain.
 3. **s. 63(4) certificate structure:** Part A and Part B, two signatories, and it must
@@ -1331,6 +1338,37 @@ diverge from the docs.
     any mismatch, or a missing stored hash, into `evidence.notes`. It can't locate the
     chunk. Options: verify chunk checksums ourselves, or get the libewf error list exposed.
     The PyPI wheel also can't *write* E01 (no zlib), which matters for Phase 2 acquisition.
+
+**Raised while building Phases 4, 5 and 7 (2026-09-18):**
+
+17. **Schema is at version 2.** `disk_layout` gained `format_t_device_raw` /
+    `format_t_device_encoding` / `format_t_local` (the parse service had been discarding
+    `DiskLayout.format_time` entirely); `custody` gained `seal_number`, `seal_intact` and
+    `note`; a new `attachment` table holds FR-74 documents. `seal_intact` is three-valued
+    on purpose — NULL means never sealed, 0 means found broken, and merging them would
+    report a case-ending fact at the weight of a routine one. Doc 3 §11 needs updating.
+
+18. **Motion analysis decodes, or refuses.** `services/analytics.py` previously differenced
+    the compressed payload as if it were a greyscale buffer, which measures bitrate rather
+    than motion and — because encoders spend more bits on moving scenes — produced
+    plausible-looking output. It now decodes through FFmpeg at 2 fps / 320x240 and raises
+    without it. Doc 3 §9 should state that Stage 1 samples, and that activity shorter than
+    one sample interval can fall between samples.
+
+19. **`findings.json` carries two digests.** The whole-file digest covers this
+    examination's own history (audit head, artefact list, generation time) and legitimately
+    differs between runs, because generating a report is itself an audited event.
+    `conclusions_digest` covers only what was found on the disk and is what AC-11 is
+    really about — the number two labs compare. Doc 2 AC-11 should say which one it means.
+
+20. **WeasyPrint is an optional extra.** PDF/A needs cairo and pango at the system level,
+    which CI and the minimum-spec VM should not carry. `spectra report generate` writes the
+    HTML and states plainly that the PDF step was skipped. Packaging (NFR-15) still has to
+    decide whether the bundle ships it.
+
+21. **FR-34 audio extraction has no producer.** No plugin emits `Frame.kind == "audio"`, so
+    an audio export path would be written against an invented format. Needs a real `.dav`
+    or Hikvision sample first (P2, doc 4 §12).
 
 **Diagram ideas NOT adopted — research spikes only, never committed scope:**
 
