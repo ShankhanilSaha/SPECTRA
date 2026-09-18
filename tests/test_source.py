@@ -245,7 +245,12 @@ def test_hash_source_reports_progress(tmp_path):
     seen = []
     digests = hash_source(src, chunk=1000, progress=lambda done, total: seen.append((done, total)))
     assert seen == [(1000, 2500), (2000, 2500), (2500, 2500)]
-    assert digests.to_json() == {"md5": digests.md5, "sha256": digests.sha256, "size": 2500}
+    assert digests.to_json() == {
+        "md5": digests.md5,
+        "sha1": digests.sha1,
+        "sha256": digests.sha256,
+        "size": 2500,
+    }
     src.close()
 
 

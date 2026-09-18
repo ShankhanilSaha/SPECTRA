@@ -56,14 +56,23 @@ def parse(store: CaseStore, evidence_id: str) -> ParseSummary:
                 raise ServiceError(f"{evidence_id}: {exc}") from exc
             store.conn.execute("BEGIN IMMEDIATE")
             try:
+                # The volume format time is kept in the layer it belongs to. It is the
+                # recorder's own clock, so it is stored device-local and `format_utc`
+                # stays NULL until an offset is established (FR-53). Discarding it would
+                # lose the fact that bounds how far back footage can possibly go.
+                fmt = layout.format_time
                 store.conn.execute(
                     "INSERT INTO disk_layout (evidence_id, block_size, block_count, blocks_used,"
-                    " index_extents_json, log_extents_json, format_utc, family, layout_version,"
-                    " note) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    " index_extents_json, log_extents_json, format_t_device_raw,"
+                    " format_t_device_encoding, format_t_local, format_utc, family,"
+                    " layout_version, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (evidence_id, layout.block_size, layout.block_count, layout.blocks_used,
                      json.dumps([e.to_json() for e in layout.index_extents]),
                      json.dumps([e.to_json() for e in layout.log_extents]),
-                     None, layout.family, layout.layout_version, layout.note),
+                     None if fmt is None else fmt.raw_repr(),
+                     None if fmt is None else fmt.encoding,
+                     _local(fmt), None,
+                     layout.family, layout.layout_version, layout.note),
                 )
                 first = store.conn.execute("SELECT COUNT(*) FROM recording").fetchone()[0]
                 count = 0

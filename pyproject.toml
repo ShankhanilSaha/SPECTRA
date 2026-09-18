@@ -10,11 +10,19 @@ requires-python = ">=3.11"
 dynamic = ["version"]
 dependencies = [
     "typer>=0.12",
+    # Report templating (doc 3 §13, FR-80, FR-87). Pure Python, BSD-3-Clause, no native
+    # dependencies — safe for the offline single-file bundle (NFR-07, NFR-15, NFR-16).
+    "jinja2>=3.1",
 ]
 
 [project.optional-dependencies]
 # E01/Ex01 ingest (FR-17). libewf is LGPL-3.0, used as a dynamically loaded extension.
 ewf = ["libewf-python>=20240506"]
+# PDF/A rendering (doc 3 §10). Kept optional because WeasyPrint needs cairo and pango at
+# the system level, which CI and the minimum-spec VM should not have to carry to run the
+# rest of the suite. Without it `spectra report generate` still produces the HTML and says
+# plainly that the PDF step was skipped — it never silently emits a lesser artefact.
+pdf = ["weasyprint>=62"]
 dev = [
     "pytest>=8",
     "ruff>=0.5",
@@ -35,6 +43,7 @@ addopts = "-ra"
 markers = [
     "ffmpeg: needs an FFmpeg binary (SPECTRA_FFMPEG or PATH); skipped with notice otherwise",
     "ewf: needs pyewf (libewf-python); skipped with notice otherwise",
+    "pdf: needs WeasyPrint and its native libs; skipped with notice otherwise",
 ]
 
 [tool.ruff]

@@ -16,6 +16,7 @@ from typing import Any
 from spectra.core.casestore import CaseStore
 from spectra.core.models import OffsetMethod, ReferenceTime
 from spectra.services import ServiceError
+from spectra.timeline import anomalies as anom
 from spectra.timeline import correlate as correlate_mod
 from spectra.timeline import gaps as gaps_mod
 from spectra.timeline.offset import observe
@@ -346,3 +347,50 @@ def show(store: CaseStore, evidence_id: str) -> dict[str, Any]:
 def to_json(data: dict[str, Any]) -> str:
     """Deterministic serialisation for AC-11 comparisons."""
     return json.dumps(data, indent=2, sort_keys=True)
+
+
+def _parse_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def time_anomalies(store: CaseStore, evidence_id: str) -> list[anom.Anomaly]:
+    """Where the recorder's own recorded times contradict each other (FR-55).
+
+    Runs on device-local time, which is the axis the contradictions live on: a recorder
+    disagreeing with itself is not something a clock offset can explain away.
+    """
+    cur = store.conn.execute(
+        "SELECT id, channel, t_local_start, t_local_end, extents_json FROM recording"
+        " WHERE evidence_id = ? ORDER BY id",
+        (evidence_id,),
+    )
+    segments = []
+    for position, row in enumerate(cur.fetchall()):
+        rec_id, channel, start, end, extents = row
+        segments.append(
+            anom.Segment(
+                recording_id=rec_id,
+                channel=channel,
+                start=_parse_dt(start),
+                end=_parse_dt(end),
+                index_position=position,
+                extent_key=extents or "",
+            )
+        )
+
+    layout = store.conn.execute(
+        "SELECT format_t_local FROM disk_layout WHERE evidence_id = ?", (evidence_id,)
+    ).fetchone()
+    evidence = store.conn.execute(
+        "SELECT acquired_utc FROM evidence WHERE id = ?", (evidence_id,)
+    ).fetchone()
+    return anom.detect(
+        segments,
+        format_time=_parse_dt(layout[0]) if layout else None,
+        acquired=_parse_dt(evidence[0]) if evidence else None,
+    )
