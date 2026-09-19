@@ -6,6 +6,7 @@ import functools
 import json
 import sqlite3
 import sys
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -63,6 +64,52 @@ def test_case_to_export_via_cli(tmp_path, cli):
     assert "VERIFIED" in cli("case", "verify")
     info = json.loads(cli("case", "info", "--json"))
     assert info["evidence"][0]["provenance_class"] == "D"
+
+
+def test_every_step_the_desktop_ui_drives_has_json_output(tmp_path, cli):
+    """The desktop UI is a client of this CLI (doc 3 §2): it runs each step with --json
+    and renders what comes back, so every step it drives must answer in JSON."""
+    case_dir = tmp_path / "CASE-UI"
+    as_case = ("--case", str(case_dir), "--json")
+    created = json.loads(cli("case", "new", "--id", "CASE-UI", "--dir", str(case_dir), "--json"))
+    assert created["case_id"] == "CASE-UI" and created["audit_head"]["seq"] >= 1
+
+    memo = tmp_path / "panchnama.txt"
+    memo.write_text("seizure memo", "utf-8")
+    attached = json.loads(cli("case", "attach", "--file", str(memo), "--kind", "panchnama",
+                              *as_case))
+    assert attached["kind"] == "panchnama" and len(attached["sha256"]) == 64
+
+    ingest = json.loads(cli("import", "files", "--dir", str(_dav_usb(tmp_path)), *as_case))
+    assert ingest["evidence_id"] == "EV-001" and len(ingest["sha256"]) == 64
+    custody = json.loads(cli("case", "custody", "--from", "SI Kumar", "--to", "Lab",
+                             "--purpose", "examination", *as_case))
+    assert custody["entry"]["to_holder"] == "Lab"
+
+    cli("identify", *as_case)
+    audit_len = json.loads(cli("case", "info", *as_case))["audit_head"]["seq"]
+    shown = json.loads(cli("identify", "show", *as_case))
+    assert shown["support"] == "parse" and shown["selected_family"] == "dahua"
+    assert shown["candidates"][0]["matches"], "the matched bytes are what the panel shows"
+    after = json.loads(cli("case", "info", *as_case))["audit_head"]["seq"]
+    assert after == audit_len, "showing a stored identification must not write to the audit"
+
+    parsed = json.loads(cli("parse", *as_case))
+    assert parsed["recordings"] == 1 and parsed["family"] == "dahua"
+    exported = json.loads(cli("export", "clip", "--recording", "REC-0001", *as_case))
+    assert exported["mp4"] is None and "FFmpeg" in exported["mp4_skipped_reason"]
+    artifacts = json.loads(cli("list", "artifacts", "--recording", "REC-0001", *as_case))
+    assert {a["kind"] for a in artifacts} == {"es", "frame_index"}
+    assert all(Path(a["path"]).is_file() for a in artifacts)
+
+    timed = json.loads(cli("time", "set", "--method", "B", "--device-time",
+                           "2026-03-05T14:22:00", "--true-time", "2026-03-05T14:04:18Z",
+                           *as_case))
+    assert timed["recordings_normalised"] == 1
+
+    report = json.loads(cli("report", "generate", "--out", str(tmp_path / "report"),
+                            "--no-pdf", *as_case))
+    assert Path(report["html"]).is_file() and report["pdf"] is None and report["audit_ok"]
 
 
 def _dav_usb(tmp_path, name="usb", frames=8):

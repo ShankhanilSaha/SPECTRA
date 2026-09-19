@@ -200,3 +200,24 @@ def _copy_out(
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", "utf-8")
     copied.append(manifest_path)
     return copied
+
+
+def artifact_rows(store: CaseStore, recording_id: str | None = None) -> list[dict[str, Any]]:
+    """Stored artefacts, oldest first, each with its absolute path in the case store.
+
+    Read-only. A viewer plays the evidence copy from here rather than from a loose file, so
+    what is shown is the file whose digest the case records.
+    """
+    query = ("SELECT sha256, md5, kind, recording_id, is_derivative, created_utc, size_bytes"
+             " FROM artifact")
+    args: tuple[Any, ...] = ()
+    if recording_id:
+        query += " WHERE recording_id = ?"
+        args = (recording_id,)
+    cursor = store.conn.execute(query + " ORDER BY created_utc, sha256", args)
+    names = [c[0] for c in cursor.description]
+    rows = [dict(zip(names, row, strict=True)) for row in cursor]
+    for row in rows:
+        row["is_derivative"] = bool(row["is_derivative"])
+        row["path"] = str(store.artifact_path(row["sha256"]))
+    return rows

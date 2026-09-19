@@ -15,7 +15,7 @@ import typer
 
 import spectra
 from spectra.core.audit import CanonicalisationError
-from spectra.core.casestore import CaseError, CaseMeta, CaseStore
+from spectra.core.casestore import ArtifactRef, CaseError, CaseMeta, CaseStore
 from spectra.core.media import MediaError, MediaTool, locate_ffmpeg
 from spectra.core.source import SourceError
 from spectra.identify.engine import IdentificationResult, IdentifyError
@@ -103,6 +103,13 @@ def _emit_json(data: Any) -> None:
     typer.echo(json.dumps(data, indent=2, sort_keys=True))
 
 
+def _artifact_json(ref: ArtifactRef | None) -> dict[str, Any] | None:
+    if ref is None:
+        return None
+    return {"sha256": ref.sha256, "md5": ref.md5, "size": ref.size, "kind": ref.kind,
+            "path": str(ref.path)}
+
+
 # -- case -----------------------------------------------------------------------------------
 
 @case_app.command("new")
@@ -116,11 +123,17 @@ def case_new(
     examiner: Annotated[str, typer.Option("--examiner")] = "",
     designation: Annotated[str, typer.Option("--designation")] = "",
     s79a: Annotated[str, typer.Option("--s79a", help="IT Act s. 79A notification ref.")] = "",
+    as_json: JsonOpt = False,
 ) -> None:
     """Create a case directory with its database, audit chain and manifest."""
     meta = CaseMeta(case_id, title, agency, fir, authority, examiner, designation, s79a)
     with CaseStore.create(directory, meta, operator()) as store:
         head_seq, head = store.audit.head()
+        root = store.root
+    if as_json:
+        _emit_json({"case_id": case_id, "directory": str(root.resolve()),
+                    "audit_head": {"seq": head_seq, "digest": head}})
+        return
     typer.echo(f"created case {case_id} at {directory}")
     typer.echo(f"audit head: seq {head_seq} {head}")
 
@@ -206,6 +219,7 @@ def case_custody(
     signature: Annotated[str, typer.Option("--signature", help="Signature reference.")] = "",
     note: Annotated[str, typer.Option("--note")] = "",
     case: CaseOpt = None,
+    as_json: JsonOpt = False,
 ) -> None:
     """Record a physical custody transfer (FR-73, SOP Form F-2)."""
     with _open(case) as store:
@@ -215,6 +229,9 @@ def case_custody(
             seal_number=seal, seal_intact=seal_intact, signature_ref=signature, note=note,
         )
         breaks = custody_service.chain_breaks(store, ev_id)
+    if as_json:
+        _emit_json({"entry": entry.to_json(), "chain_breaks": breaks})
+        return
     typer.echo(f"custody entry {entry.seq} recorded for {ev_id}")
     typer.echo(f"  {entry.from_holder} -> {entry.to_holder}   {entry.purpose}")
     seal_text = {None: "no seal recorded", True: "seal intact", False: "SEAL BROKEN"}[
@@ -234,6 +251,7 @@ def case_attach(
     provided_by: Annotated[str, typer.Option("--provided-by")] = "",
     evidence: EvidenceOpt = None,
     case: CaseOpt = None,
+    as_json: JsonOpt = False,
 ) -> None:
     """Attach and hash an external case document (FR-74).
 
@@ -246,6 +264,9 @@ def case_attach(
             store, file, kind, description=description, evidence_id=ev_id,
             provided_by=provided_by,
         )
+    if as_json:
+        _emit_json(ref.to_json())
+        return
     typer.echo(f"attached {ref.id}  {ref.kind}  {ref.filename}")
     typer.echo(f"  sha256 {ref.sha256}")
     typer.echo(f"  size   {ref.size_bytes} bytes")
@@ -295,11 +316,12 @@ def import_image(
     label: Annotated[str, typer.Option("--label")] = "",
     note: Annotated[str, typer.Option("--note")] = "",
     case: CaseOpt = None,
+    as_json: JsonOpt = False,
 ) -> None:
     """Ingest an existing image and hash it (FR-17)."""
     with _open(case) as store:
         result = evidence_service.import_image(store, file, provenance.upper(), label, note)
-    _print_ingest(result)
+    _print_ingest(result, as_json)
 
 
 @import_app.command("files")
@@ -308,14 +330,23 @@ def import_files(
     label: Annotated[str, typer.Option("--label")] = "",
     note: Annotated[str, typer.Option("--note")] = "",
     case: CaseOpt = None,
+    as_json: JsonOpt = False,
 ) -> None:
     """Ingest owner-provided export files as provenance class D (FR-18)."""
     with _open(case) as store:
         result = evidence_service.import_files(store, directory, label, note)
-    _print_ingest(result)
+    _print_ingest(result, as_json)
 
 
-def _print_ingest(result: evidence_service.IngestResult) -> None:
+def _print_ingest(result: evidence_service.IngestResult, as_json: bool = False) -> None:
+    if as_json:
+        _emit_json({
+            "evidence_id": result.evidence_id, "size": result.size, "md5": result.md5,
+            "sha256": result.sha256, "gaps": [list(g) for g in result.gaps],
+            "embedded_hash_check": result.embedded_hash_check,
+            "source_format": result.source_format, "notes": result.notes,
+        })
+        return
     typer.echo(f"ingested {result.evidence_id}: {result.size} bytes")
     typer.echo(f"  md5    {result.md5}")
     typer.echo(f"  sha256 {result.sha256}")
@@ -377,23 +408,54 @@ def identify_select(
     reason: Annotated[str, typer.Option("--reason", help="Why this candidate (audited).")],
     evidence: EvidenceOpt = None,
     case: CaseOpt = None,
+    as_json: JsonOpt = False,
 ) -> None:
     """Select one of the reported candidates for an ambiguous identification (audited)."""
     with _open(case) as store:
         evidence_id = evidence_service.default_evidence_id(store, evidence)
         chosen = identify_service.select_family(store, evidence_id, family, reason)
+    if as_json:
+        _emit_json({"evidence_id": evidence_id, "family": chosen.family,
+                    "layout_version": chosen.layout_version,
+                    "confidence": chosen.confidence, "parse_supported": chosen.parse_supported})
+        return
     typer.echo(f"{evidence_id}: selected {chosen.family} "
                f"(parse_supported {chosen.parse_supported})")
+
+
+@identify_app.command("show")
+def identify_show(evidence: EvidenceOpt = None, case: CaseOpt = None,
+                  as_json: JsonOpt = False) -> None:
+    """Show the stored identification without re-probing (read-only, not audited)."""
+    with _open(case) as store:
+        evidence_id = evidence_service.default_evidence_id(store, evidence)
+        view = identify_service.identification_view(store, evidence_id)
+    if as_json:
+        _emit_json(view)
+        return
+    typer.echo(f"{evidence_id}: {view['status'].upper()}  (support: {view['support']})")
+    for candidate in view["candidates"]:
+        typer.echo(f"  candidate {candidate['family']}  layout "
+                   f"{candidate['layout_version'] or 'unrecognised'}  confidence "
+                   f"{candidate['confidence']:.2f}")
+    if view["selection"]:
+        typer.echo(f"  selected {view['selected_family']} ({view['selection']})")
 
 
 # -- parse / list / export ------------------------------------------------------------------
 
 @app.command("parse")
-def parse_cmd(evidence: EvidenceOpt = None, case: CaseOpt = None) -> None:
+def parse_cmd(evidence: EvidenceOpt = None, case: CaseOpt = None,
+              as_json: JsonOpt = False) -> None:
     """Read the layout and enumerate T1 recordings through the selected plugin."""
     with _open(case) as store:
         evidence_id = evidence_service.default_evidence_id(store, evidence)
         summary = parse_service.parse(store, evidence_id)
+    if as_json:
+        _emit_json({"evidence_id": summary.evidence_id, "family": summary.family,
+                    "layout_version": summary.layout_version,
+                    "recordings": summary.recordings, "channels": list(summary.channels)})
+        return
     typer.echo(f"{summary.evidence_id}: {summary.family} {summary.layout_version} — "
                f"{summary.recordings} recording(s) on channel(s) {list(summary.channels)}")
     typer.echo("  times are device-local; no clock offset established (FR-53)")
@@ -493,6 +555,26 @@ def list_recordings(
         typer.echo("no recordings")
 
 
+@list_app.command("artifacts")
+def list_artifacts(
+    recording: Annotated[str | None, typer.Option("--recording")] = None,
+    case: CaseOpt = None,
+    as_json: JsonOpt = False,
+) -> None:
+    """List stored artefacts (exports, logs) with their digests and store paths."""
+    with _open(case) as store:
+        rows = export_service.artifact_rows(store, recording)
+    if as_json:
+        _emit_json(rows)
+        return
+    for row in rows:
+        derivative = "  DERIVATIVE" if row["is_derivative"] else ""
+        typer.echo(f"{row['sha256'][:16]}…  {row['kind']:<14} {row['recording_id'] or '-':<9} "
+                   f"{row['size_bytes']} bytes{derivative}")
+    if not rows:
+        typer.echo("no artefacts")
+
+
 @export_app.command("clip")
 def export_clip(
     recording: Annotated[str, typer.Option("--recording", help="Recording ID, e.g. REC-0001.")],
@@ -500,10 +582,19 @@ def export_clip(
         Path | None, typer.Option("--out", help="Also copy files + manifest here.")
     ] = None,
     case: CaseOpt = None,
+    as_json: JsonOpt = False,
 ) -> None:
     """Export the ES (always) and a verified evidence-copy MP4 (when possible)."""
     with _open(case) as store:
         result = export_service.export_recording(store, recording, _media(store), out)
+    if as_json:
+        _emit_json({
+            "recording_id": result.recording_id, "frames": result.frames,
+            "es": _artifact_json(result.es), "frame_index": _artifact_json(result.frame_index),
+            "mp4": _artifact_json(result.mp4), "mp4_skipped_reason": result.mp4_skipped_reason,
+            "vcl": result.vcl, "copied_to": [str(p) for p in result.copied_to],
+        })
+        return
     typer.echo(f"{result.recording_id}: {result.frames} frames")
     typer.echo(f"  ES   sha256 {result.es.sha256}  md5 {result.es.md5}")
     if result.mp4:
@@ -538,6 +629,7 @@ def time_set(
                                       "printed in the report).")] = "",
     evidence: EvidenceOpt = None,
     case: CaseOpt = None,
+    as_json: JsonOpt = False,
 ) -> None:
     """Record one clock-offset observation and renormalise the evidence item (audited)."""
     methods = {"A": "A_ntp", "B": "B_reference_capture", "C": "C_external_event",
@@ -552,6 +644,13 @@ def time_set(
             tz_offset_minutes * 60 if tz_offset_minutes is not None else None,
             valid_from, valid_to, note,
         )
+    if as_json:
+        _emit_json({"evidence_id": summary.evidence_id,
+                    "observation_id": summary.observation_id,
+                    "offset_note": summary.offset_note,
+                    "recordings_normalised": summary.recordings_normalised,
+                    "recordings_refused": summary.recordings_refused})
+        return
     typer.echo(f"{summary.evidence_id}: recorded {summary.observation_id}")
     typer.echo(f"  {summary.offset_note}")
     typer.echo(f"  recordings normalised: {summary.recordings_normalised}  "
@@ -627,6 +726,11 @@ def gaps_cmd(
                        f"{gap['duration_s']:.0f} s — synchronised absence is a finding")
         if not entry["channel_gaps"] and not entry["synchronised_gaps"]:
             typer.echo(f"  no gaps ≥ {data['min_gap_s']:g} s")
+        if entry["not_placed"]:
+            typer.echo("  not in this analysis — the gaps above do not account for:")
+            for item in entry["not_placed"]:
+                typer.echo(f"    {item['recording_id']}  ch {item['channel']}  "
+                           f"— {item['reason']}")
 
 
 # -- analytics ------------------------------------------------------------------------------
@@ -798,6 +902,7 @@ def report_generate(
     letterhead: Annotated[str, typer.Option("--letterhead")] = "",
     footer: Annotated[str, typer.Option("--footer")] = "",
     no_pdf: Annotated[bool, typer.Option("--no-pdf", help="Write the HTML only.")] = False,
+    as_json: JsonOpt = False,
 ) -> None:
     """Render the twelve-section examination report (FR-80, AC-09)."""
     branding = report_generator.Branding(
@@ -808,6 +913,10 @@ def report_generate(
             store, out_dir=out, branding=branding,
             tool_version=spectra.__version__, pdf=not no_pdf,
         )
+    if as_json:
+        _emit_json({key: str(value) if isinstance(value, Path) else value
+                    for key, value in result.items()})
+        return
     typer.echo(f"report        {result['html']}")
     typer.echo(f"  sha256      {result['html_sha256']}")
     if result["pdf"]:
