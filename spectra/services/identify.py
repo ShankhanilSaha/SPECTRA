@@ -82,6 +82,27 @@ def identification_row(store: CaseStore, evidence_id: str) -> dict[str, Any]:
     return dict(zip([c[0] for c in cursor.description], row, strict=True))
 
 
+def identification_view(store: CaseStore, evidence_id: str) -> dict[str, Any]:
+    """The stored identification, decoded for display. Read-only: nothing is re-probed and
+    nothing is audited, so a UI can show it as often as it likes."""
+    row = identification_row(store, evidence_id)
+    if row["family"] is None:
+        support = "pending_selection" if row["status"] == "ambiguous" else "none"
+    else:
+        support = "parse" if row["parse_supported"] else "carve_only"
+    return {
+        "evidence_id": evidence_id,
+        "status": row["status"],
+        "support": support,
+        "selected_family": row["family"],
+        "selected_layout_version": row["layout_version"],
+        "selection": row["selection"],
+        "candidates": json.loads(row["candidates_json"] or "[]"),
+        "observations": json.loads(row["observations_json"] or "[]"),
+        "errors": json.loads(row["errors_json"] or "[]"),
+    }
+
+
 def _persist(
     store: CaseStore,
     evidence_id: str,
