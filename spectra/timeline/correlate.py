@@ -16,6 +16,13 @@ from spectra.core.models import ReferenceTime
 from spectra.timeline.gaps import CoverageSegment
 from spectra.timeline.timemodel import Ordering, ordering
 
+#: Why a recording whose end precedes its start is kept off the axis. The contradiction
+#: itself is reported by the FR-55 detector `anomalies.ends_before_start`.
+ENDS_BEFORE_START = (
+    "the recorded end time is earlier than the recorded start time, so this recording has "
+    "no interval to place; reported as a time anomaly"
+)
+
 
 @dataclass(frozen=True, slots=True)
 class Lane:
@@ -74,6 +81,9 @@ def correlate(
             refusal = start if start.utc is None else end
             unplaced.append(Unplaced(evidence_id, recording_id, channel,
                                      refusal.derivation_note))
+            continue
+        if end.utc < start.utc:
+            unplaced.append(Unplaced(evidence_id, recording_id, channel, ENDS_BEFORE_START))
             continue
         placed.append(Placed(evidence_id, recording_id, channel, start.utc, end.utc,
                              max(start.uncertainty_s, end.uncertainty_s)))

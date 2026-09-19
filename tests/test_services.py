@@ -211,25 +211,50 @@ def test_export_out_dir_never_overwrites(store, tmp_path):
     assert (out / "REC-0001.h264").read_bytes() == b"someone else's file"
 
 
-def _backwards_clock_dav(units):
+def _timed_dav(units, *, set_back_from=None, tick_back_at=None):
+    """DHAV frames 40 ms apart. `set_back_from`: the device clock is set back 2 h from that
+    frame on (S-08). `tick_back_at`: that one frame's ms tick runs 50 ms backwards while its
+    date stays in the same second, so no split is due but the frame timing is not
+    increasing."""
     start = datetime(2026, 3, 5, 14, 32, 10)
     frames = []
     for i, (unit, key) in enumerate(units):
         moment = start + timedelta(milliseconds=40 * i)
-        if i == len(units) // 2:
-            moment -= timedelta(hours=2)  # device clock set back mid-recording (S-08)
+        tick = 40 * i
+        if set_back_from is not None and i >= set_back_from:
+            moment -= timedelta(hours=2)
+        if i == tick_back_at:
+            tick -= 90
         frames.append(dhavgen.frame(unit, frame_type=dhavgen.I_FRAME if key else dhavgen.P_FRAME,
                                     seq=i, date=dhavgen.pack_date(moment),
-                                    tick=(40 * i) % 0x10000,
+                                    tick=tick % 0x10000,
                                     ext=dhavgen.video_ext() if key else b""))
     return b"".join(frames)
 
 
 @pytest.mark.ffmpeg
-def test_export_with_backwards_device_time_keeps_es_and_records_why_no_mp4(store, tmp_path):
+def test_a_clock_set_back_mid_file_exports_each_segment_as_a_verified_mp4(store, tmp_path):
+    """S-08 shape. The parser splits at the step, so each side keeps increasing timestamps
+    and gets its own verified evidence MP4. Before the split the whole file was one
+    recording that ended before it started, and it got no MP4 at all."""
+    ffmpeg = require_ffmpeg()
+    units = split_access_units(encode_test_stream(tmp_path, "h264", frames=20, gop=10), "h264")
+    parsed_export(store, tmp_path, _timed_dav(units, set_back_from=10))
+    tool = MediaTool(ffmpeg, store.root / "logs")
+    first = ex.export_recording(store, "REC-0001", tool)
+    second = ex.export_recording(store, "REC-0002", tool)
+    assert first.mp4 is not None and second.mp4 is not None
+    assert first.vcl["result"] == second.vcl["result"] == "identical"
+    assert first.es.path.read_bytes() + second.es.path.read_bytes() == b"".join(
+        u for u, _ in units
+    )
+
+
+@pytest.mark.ffmpeg
+def test_export_with_backwards_frame_timing_keeps_es_and_records_why_no_mp4(store, tmp_path):
     ffmpeg = require_ffmpeg()
     units = split_access_units(encode_test_stream(tmp_path, "h264", frames=20), "h264")
-    parsed_export(store, tmp_path, _backwards_clock_dav(units))
+    parsed_export(store, tmp_path, _timed_dav(units, tick_back_at=10))
     result = ex.export_recording(store, "REC-0001", MediaTool(ffmpeg, store.root / "logs"))
     assert result.mp4 is None
     assert "not strictly increasing" in result.mp4_skipped_reason

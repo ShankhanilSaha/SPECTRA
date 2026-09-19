@@ -17,6 +17,7 @@ from spectra.services import identify as ident
 from spectra.services import parse as ps
 from spectra.services import timeline as ts
 from spectra.timeline import anomalies as anom
+from spectra.timeline import correlate as correlate_mod
 from tests import hikgen
 from tests.test_audit import fixed_clock
 
@@ -136,6 +137,69 @@ def test_a_zero_length_recording_is_reported(tmp_path: Path) -> None:
     found = anom.zero_length([seg("REC-1", 1, T0, T0)])
     assert len(found) == 1
     assert found[0].numbers["affected"] == 1
+
+
+# --- ends before start ------------------------------------------------------------------
+
+
+def test_a_recording_that_ends_before_it_starts_is_reported() -> None:
+    found = anom.ends_before_start([
+        seg("REC-1", 1, T0, T0 - timedelta(hours=2)),
+        seg("REC-2", 1, T0, T0 + timedelta(minutes=5)),
+        seg("REC-3", 1, None, None),
+    ])
+    assert len(found) == 1
+    assert found[0].kind == "ends_before_start"
+    assert found[0].recording_ids == ("REC-1",)
+    assert found[0].numbers == {"affected": 1, "worst_s": 7200.0}
+
+
+def test_an_inverted_recording_is_not_also_reported_as_an_overlap() -> None:
+    """It has no interval, so it overlaps nothing; the overlap maths on it was nonsense
+    ("overlapping by -4200 s")."""
+    found = anom.detect([
+        seg("REC-2", 1, T0, T0 + timedelta(minutes=30), position=0),
+        seg("REC-1", 1, T0 + timedelta(minutes=10), T0 - timedelta(hours=1), position=1),
+    ])
+    assert [a.kind for a in found] == ["ends_before_start"]
+
+
+def test_an_inverted_index_entry_is_reported_and_breaks_nothing_downstream(
+    tmp_path: Path,
+) -> None:
+    """The same shape from a second family: timeline, gaps and the report all cope, and
+    each says what it left out rather than crashing or drawing a negative-length bar."""
+    path = tmp_path / "hik.raw"
+    path.write_bytes(hikgen.volume(recordings=[
+        (1, T0, T0 - timedelta(hours=2)),
+        (1, T0 + timedelta(hours=1), T0 + timedelta(hours=2)),
+    ]))
+    store = CaseStore.create(
+        tmp_path / "case", CaseMeta("CASE-A-3"), "examiner-1", clock=fixed_clock()
+    )
+    ingest = ev.import_image(store, path, "A")
+    ident.run_identify(store, ingest.evidence_id)
+    ps.parse(store, ingest.evidence_id)
+
+    assert [a.kind for a in ts.time_anomalies(store, ingest.evidence_id)] == [
+        "ends_before_start"
+    ]
+    assert "NF-TIME-ENDS-BEFORE-START" in {f.code for f in negative_findings(store)}
+
+    (entry,) = ts.gap_report(store, ingest.evidence_id)["evidence"]
+    assert [p["recording_id"] for p in entry["not_placed"]] == ["REC-0001"]
+    assert entry["not_placed"][0]["reason"] == correlate_mod.ENDS_BEFORE_START
+
+    ts.set_offset(store, ingest.evidence_id, "B_reference_capture",
+                  device_time="2026-03-05T14:22:00", true_time="2026-03-05T14:04:18Z")
+    data = ts.timeline_data(store, ingest.evidence_id)
+    assert [s["recording_id"] for lane in data["lanes"] for s in lane["segments"]] == [
+        "REC-0002"
+    ]
+    assert [(u["recording_id"], u["reason"]) for u in data["unplaced"]] == [
+        ("REC-0001", correlate_mod.ENDS_BEFORE_START)
+    ]
+    store.close()
 
 
 # --- every anomaly offers more than one explanation -------------------------------------

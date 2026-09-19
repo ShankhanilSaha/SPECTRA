@@ -209,21 +209,33 @@ def _renormalise(store: CaseStore, evidence_id: str, model: ClockModel) -> tuple
 
 def _segments_for(
     store: CaseStore, evidence_ids: list[str], basis: str
-) -> list[gaps_mod.CoverageSegment]:
+) -> tuple[list[gaps_mod.CoverageSegment], list[dict[str, Any]]]:
+    """Recordings on the gap axis, and every recording left off it with the reason.
+
+    Gap analysis can only see what is placed on the axis, so a recording left off is
+    footage the gap figures do not account for. Listing them keeps that visible.
+    """
     start_col, end_col = (("t_ref_start", "t_ref_end") if basis == "reference"
                           else ("t_local_start", "t_local_end"))
     segments = []
+    not_placed: list[dict[str, Any]] = []
     for evidence_id in evidence_ids:
         for rec_id, channel, start, end, uncertainty in store.conn.execute(
             f"SELECT id, channel, {start_col}, {end_col}, t_uncertainty_s FROM recording"  # noqa: S608
             " WHERE evidence_id=? ORDER BY id", (evidence_id,),
         ).fetchall():
-            if start and end:
+            if not (start and end):
+                reason = f"no {basis} time on this recording"
+            elif datetime.fromisoformat(end) < datetime.fromisoformat(start):
+                reason = correlate_mod.ENDS_BEFORE_START
+            else:
                 segments.append(gaps_mod.CoverageSegment(
                     channel, datetime.fromisoformat(start), datetime.fromisoformat(end),
                     uncertainty or 0.0, rec_id,
                 ))
-    return segments
+                continue
+            not_placed.append({"recording_id": rec_id, "channel": channel, "reason": reason})
+    return segments, not_placed
 
 
 def _evidence_ids(store: CaseStore, evidence_id: str | None) -> list[str]:
@@ -291,7 +303,7 @@ def gap_report(
             (ev_id,),
         ).fetchone())
         basis = "reference" if has_ref else "device-local"
-        segments = _segments_for(store, [ev_id], basis)
+        segments, not_placed = _segments_for(store, [ev_id], basis)
         entry: dict[str, Any] = {
             "evidence_id": ev_id,
             "basis": basis,
@@ -299,6 +311,7 @@ def gap_report(
                              gaps_mod.channel_gaps(segments, min_gap_s)],
             "synchronised_gaps": [_gap_json(g) for g in
                                   gaps_mod.synchronised_gaps(segments, min_gap_s)],
+            "not_placed": not_placed,
         }
         if basis == "device-local":
             entry["banner"] = REFUSAL_BANNER

@@ -203,6 +203,16 @@ def test_correlate_places_normalised_and_reports_unplaced():
     assert REFUSAL_BANNER in result.unplaced[0].reason
 
 
+def test_correlate_keeps_a_recording_that_ends_before_it_starts_off_the_axis():
+    """It used to raise from CoverageSegment and take `spectra timeline` down with it."""
+    start, end = _ref(utc(2026, 3, 5, 14, 0), 1.0), _ref(utc(2026, 3, 5, 12, 0), 1.0)
+    result = correlate_mod.correlate([("EV-001", "REC-0001", 1, start, end)])
+    assert result.lanes == ()
+    assert [(u.recording_id, u.reason) for u in result.unplaced] == [
+        ("REC-0001", correlate_mod.ENDS_BEFORE_START)
+    ]
+
+
 # -- service: the AC-07 shape, end to end ------------------------------------------------------
 
 @pytest.fixture

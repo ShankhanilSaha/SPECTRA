@@ -40,6 +40,7 @@ AnomalyKind = Literal[
     "before_volume_format",
     "future_dated",
     "zero_length",
+    "ends_before_start",
 ]
 
 #: Detector → the explanations that fit the pattern. Printed with every anomaly so a
@@ -66,6 +67,10 @@ POSSIBLE_CAUSES: dict[AnomalyKind, tuple[str, ...]] = {
     "zero_length": (
         "the recording was interrupted before any frame was written",
         "the index entry was allocated but never completed",
+    ),
+    "ends_before_start": (
+        "the device clock was set backwards while the recording was in progress",
+        "the start or end field is corrupt, or is being read with the wrong layout",
     ),
 }
 
@@ -124,7 +129,9 @@ def duplicate_windows(segments: list[Segment]) -> list[Anomaly]:
     out: list[Anomaly] = []
     by_channel: dict[int | None, list[Segment]] = {}
     for seg in segments:
-        if seg.timed:
+        # A recording that ends before it starts has no interval to overlap with; it is
+        # reported by `ends_before_start` instead.
+        if seg.timed and seg.start <= seg.end:  # type: ignore[operator]
             by_channel.setdefault(seg.channel, []).append(seg)
 
     for channel, group in sorted(by_channel.items(), key=lambda kv: (kv[0] is None, kv[0])):
@@ -267,6 +274,33 @@ def zero_length(segments: list[Segment]) -> list[Anomaly]:
     ]
 
 
+def ends_before_start(segments: list[Segment]) -> list[Anomaly]:
+    """Recordings whose recorded end is earlier than their recorded start.
+
+    No duration or interval can be stated for these, so the timeline and gap analysis
+    leave them off the axis and list them as not placed. This is where the contradiction
+    itself reaches the report.
+    """
+    affected = sorted(
+        (s for s in segments if s.timed and s.end < s.start),  # type: ignore[operator]
+        key=lambda s: s.recording_id,
+    )
+    if not affected:
+        return []
+    worst = max((s.start - s.end).total_seconds() for s in affected)  # type: ignore[operator]
+    return [
+        _make(
+            "ends_before_start", None,
+            f"{len(affected)} recording(s) carry an end time earlier than their start "
+            f"time, by up to {worst:.0f} s. No duration can be stated for them, and they "
+            "are left off the timeline and out of gap analysis.",
+            tuple(s.recording_id for s in affected[:20]),
+            affected=len(affected),
+            worst_s=round(worst, 3),
+        )
+    ]
+
+
 def detect(
     segments: list[Segment],
     *,
@@ -280,5 +314,6 @@ def detect(
     out += before_volume_format(segments, format_time)
     out += future_dated(segments, acquired)
     out += zero_length(segments)
+    out += ends_before_start(segments)
     out.sort(key=lambda a: (a.kind, a.channel is None, a.channel or 0, a.recording_ids))
     return out
