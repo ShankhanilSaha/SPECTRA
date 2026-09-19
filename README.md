@@ -70,18 +70,84 @@ SPECTRA/
 
 ## Status
 
-Documentation complete. Implementation has started: the Phase 0 foundation (read-only
-evidence I/O, dual hashing, hash-chained audit log, case store, verified FFmpeg remux, CLI),
-the identification engine, and the Dahua-family DHAV container parser for `.dav` export
-files. See [doc 8](docs/08-demo-and-deliverables.md) for the build order and `CLAUDE.md`
-§13 for progress.
+A working prototype, not a finished product. Built so far:
+
+- the read-only evidence layer, dual hashing and the hash-chained audit log;
+- identification;
+- Dahua `.dav` export parsing (raw Dahua disks are carve-only until the layout is verified
+  on hardware) and the Hikvision parser;
+- recovery tiers T2–T4 with the coverage map, and the time model and timeline;
+- motion analysis;
+- the twelve-section report and the BSA s. 63(4) certificate;
+- an Electron desktop app over the CLI.
+
+Not yet built: physical acquisition, the other vendors, object and face analytics,
+packaging. Hikvision recordings parse but cannot be exported yet. See
+[doc 8](docs/08-demo-and-deliverables.md) for the build order and `CLAUDE.md` §13 for
+detailed progress.
+
+## Running it
+
+You need Python 3.11 or later and Node 22 or later. The desktop app lives in `desktop/`,
+which is on the `feat/desktop-prototype` branch until that is merged. Tested on Windows 11.
+
+### Windows (PowerShell)
+
+These commands call `python.exe` and `npm.cmd` directly, so they also work on machines
+with an `AllSigned` execution policy. No venv activation is needed.
+
+First time only, from the repository root:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+cd desktop
+npm.cmd install
+```
+
+Every time, from `desktop\`:
+
+```powershell
+$env:SPECTRA_PYTHON = (Resolve-Path ..\.venv\Scripts\python.exe).Path
+$env:SPECTRA_FFMPEG = & $env:SPECTRA_PYTHON -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"
+npm.cmd start
+```
+
+### Linux / macOS
 
 ```bash
-python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -e ".[dev,ewf]"
-pytest                                            # FFmpeg tests need SPECTRA_FFMPEG or ffmpeg on PATH
-spectra --help
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cd desktop && npm install
+export SPECTRA_PYTHON="$PWD/../.venv/bin/python"
+export SPECTRA_FFMPEG="$("$SPECTRA_PYTHON" -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')"
+npm start
 ```
+
+### In the app
+
+- **File → New Case** or **File → Open Case** (a case is a folder containing `case.db`).
+- **File → Settings** saves the Python and FFmpeg paths, so later you only need
+  `npm.cmd start` (or `npm start`). The settings page also checks that both are found.
+- **View → Command Log** shows every `spectra` command the app has run.
+
+### Engine and tests only (no app)
+
+```powershell
+.\.venv\Scripts\spectra.exe --help
+.\.venv\Scripts\python.exe -m pytest     # FFmpeg tests need SPECTRA_FFMPEG, set as above
+```
+
+### If something goes wrong
+
+| Message | Fix |
+|---|---|
+| `npm.ps1 … is not digitally signed` | Use `npm.cmd` instead of `npm` (PowerShell `AllSigned` policy). |
+| `Activate.ps1 … cannot be loaded` | Skip activation; call `.\.venv\Scripts\python.exe` directly, as above. |
+| `Could not read package.json` | Run npm inside `desktop\`, not the repository root. |
+| "The spectra engine could not be started" | `SPECTRA_PYTHON` or **Settings → Python** must point at the venv's `python.exe`. |
+| Export gives no MP4, or motion analysis refuses | FFmpeg was not found: set `SPECTRA_FFMPEG` or **Settings → FFmpeg**. |
+| E01 images will not import | `pip install -e ".[ewf]"`. libewf does not build on Python 3.14 yet, so this needs Python 3.11–3.13. |
 
 ## Licence & handling
 

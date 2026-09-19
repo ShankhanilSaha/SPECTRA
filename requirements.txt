@@ -1,0 +1,18 @@
+# SPECTRA — development environment: the engine, the tests, and what the desktop app runs.
+#
+#   pip install -r requirements.txt        (run from the repository root)
+#
+# Versions live in pyproject.toml; this file only chooses what to install, so the two can
+# never disagree. The editable install also provides the `spectra` command.
+
+# Engine + dev tools (pytest, ruff) + faster motion analysis (OpenCV, NumPy).
+-e .[dev,ml]
+
+# A bundled FFmpeg binary for the evidence MP4 and motion analysis. Development only: it is
+# a GPL build and is never shipped (CLAUDE.md §17 item 15). Point SPECTRA_FFMPEG, or the
+# desktop app's Settings, at the path printed by:
+#   python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"
+imageio-ffmpeg
+
+# E01 images need libewf. Its wheel does not build on Python 3.14 yet, so it is opt-in:
+#   pip install -e ".[ewf]"      (Python 3.11–3.13)

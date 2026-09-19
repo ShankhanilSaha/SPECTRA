@@ -1439,7 +1439,8 @@ ONNX detector licence · Q5 government TSA availability for RFC 3161.
   this file too.
 - **Claim only what has been run.** Phase 0 and parts of Phases 1 and 3 exist (§13.1). Don't
   claim a CLI command, test, or CI job works until it exists and has been run. Dev setup:
-  `python -m venv .venv`, `pip install -e ".[dev,ewf,ml]"`, then `pytest`. FFmpeg tests skip
+  `python -m venv .venv`, `pip install -r requirements.txt` (adds `-e .[dev,ml]` and a
+  dev FFmpeg; E01 needs `.[ewf]` on Python 3.11–3.13), then `pytest`. FFmpeg tests skip
   with a notice unless `SPECTRA_FFMPEG` or PATH provides FFmpeg; the motion parity tests
   skip without OpenCV (`ml` extra). libewf-python has no wheel for Python 3.14 yet, so use
   3.11–3.13 for the E01 tests.
