@@ -317,15 +317,24 @@ class CorpusBuilder:
         dhav, es, frames = generate_dhav_stream(units, start_time=start_time, channel=0)
         img_data[offset : offset + len(dhav)] = dhav
 
-        # Overwrite 20 % of the block starting at the 20th frame
+        # Overwrite 16 KiB starting 2080 bytes into the recording (inside frame 19). The
+        # recording is only 5378 bytes long, so the overwrite runs past its end: nothing of
+        # it survives after the overwrite point, including the second I-frame.
         overwrite_start = offset + frames[20]["size"] * 20
         overwrite_len = 16 * 1024
         img_data[overwrite_start : overwrite_start + overwrite_len] = b"\xAA" * overwrite_len
 
-        rem_len = (offset + len(dhav)) - (overwrite_start + overwrite_len)
+        # What is left of the recording is its extent minus the overwritten span. A piece
+        # the overwrite fully covers does not survive and is not listed.
+        rec_start, rec_end = offset, offset + len(dhav)
+        overwrite_end = overwrite_start + overwrite_len
         surviving_ranges = [
-            [offset, overwrite_start - offset],
-            [overwrite_start + overwrite_len, rem_len],
+            [start, end - start]
+            for start, end in (
+                (rec_start, min(rec_end, overwrite_start)),
+                (max(rec_start, overwrite_end), rec_end),
+            )
+            if end > start
         ]
 
         gt = GroundTruth(
