@@ -17,7 +17,7 @@ Prerequisites: Node 22 or later, and a Python 3.11–3.13 environment that can i
 # once, from the repository root
 python -m venv .venv
 .venv\Scripts\activate            # Linux/macOS: . .venv/bin/activate
-pip install -e ".[dev,ml]"        # add ewf for E01 images; ml for faster motion analysis
+pip install -r requirements.txt   # engine, tests, OpenCV, a dev FFmpeg (E01: see the file)
 
 # once, in desktop/
 npm install
@@ -25,6 +25,11 @@ npm install
 # every time
 npm start                         # builds, then opens the window
 ```
+
+On Windows with an `AllSigned` execution policy, PowerShell refuses `npm` ("npm.ps1 is not
+digitally signed") and the venv's `Activate.ps1`. Use `npm.cmd install` / `npm.cmd start`,
+and call `.venv\Scripts\python.exe -m pip …` directly instead of activating. Neither needs a
+policy change.
 
 The app looks for Python in `SPECTRA_PYTHON`, then `python` on PATH, and for the package in
 the repository root. Change either in **File → Settings**, which also shows whether the
