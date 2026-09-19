@@ -23,6 +23,10 @@ ewf = ["libewf-python>=20240506"]
 # rest of the suite. Without it `spectra report generate` still produces the HTML and says
 # plainly that the PDF step was skipped — it never silently emits a lesser artefact.
 pdf = ["weasyprint>=62"]
+# Faster Stage 1 motion differencing (doc 3 §9, FR-90). Optional: the pure-Python reference
+# gives identical results, only slower, and CI holds the two to that. OpenCV is Apache-2.0,
+# NumPy BSD-3-Clause (NFR-16).
+ml = ["numpy>=1.26", "opencv-python-headless>=4.8"]
 dev = [
     "pytest>=8",
     "ruff>=0.5",
