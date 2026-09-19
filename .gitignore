@@ -42,3 +42,6 @@ venv/
 tests/corpus/**/*.raw
 tests/corpus/**/*.dav
 tests/corpus/**/*.img
+
+# Desktop app smoke-run screenshots
+desktop/smoke-out/
