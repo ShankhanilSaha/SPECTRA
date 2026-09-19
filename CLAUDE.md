@@ -314,8 +314,8 @@ Summarised from doc 3. Go there for code-level detail and sequence diagrams.
 ### 6.2 Layers
 
 ```
-PRESENTATION   spectra.ui (PySide6 desktop)  ·  spectra.cli (Typer)
-               peers over the same service API — no logic in the UI
+PRESENTATION   desktop/ (Electron)  ──runs──▶  spectra.cli (Typer)
+               the app runs `spectra … --json` for every action — no logic in the UI
 SERVICES       CaseService · IdentifyService · AcquireService · ParseService ·
                RecoverService · TimelineService · AnalyticsService · ReportService
                each a thin orchestrator: validate → audit start → run job → audit complete
@@ -555,8 +555,8 @@ spectra/
 ├── ml/          motion.py · objects.py · faces.py · sandbox.py (FR-95)
 ├── report/      generator.py · findings.py · negative.py · templates/ (report, bsa_63_4_certificate)
 ├── services/    thin orchestrators — the API for UI and CLI
-├── ui/          PySide6
-└── cli.py       Typer
+└── cli.py       Typer — also the desktop app's only interface to the engine
+desktop/         Electron + React shell (§17 item 26): electron/ main process · src/ screens
 tools/           dump_signature.py (FR-09) · make_corpus.py (synthetic ground-truth images)
 tests/           corpus/ · test_plugins.py (conformance) · test_timestamps.py · test_audit.py
 ```
@@ -574,7 +574,7 @@ hash chain; (c) defence expert hunting undisclosed gaps → mandatory negative f
 ### 6.14 Stack (doc 3 §13)
 
 Python 3.11+ · `struct`/`mmap` · libewf/pyewf · `hashlib` · pinned bundled FFmpeg ·
-SQLite WAL · ONNX Runtime + OpenCV · PySide6 · Typer · Jinja2 + WeasyPrint (PDF/A) ·
+SQLite WAL · ONNX Runtime + OpenCV · Electron + React (desktop) · Typer · Jinja2 + WeasyPrint (PDF/A) ·
 PyInstaller + offline wheelhouse · pytest + synthetic corpus. Drop to Rust/Cython only if
 the T3 carve profiles badly.
 
@@ -933,7 +933,7 @@ Mirrors doc 8 §3.1 (same order, same scope). **Update both together.**
 | **P2** | Formats engineer A | `identify/`, `plugins/dahua.py`, `plugins/generic_fs.py` | **Shankhanil** (`ShankhanilSaha`) |
 | **P3** | Formats engineer B | `plugins/hikvision.py`, `recover/` | *unassigned* |
 | **P4** | Acquisition + time | `acquire/`, `timeline/`, hardware track | *unassigned* |
-| **P5** | Reporting + UI | `report/`, `ui/`, templates, legal-format review | *unassigned* |
+| **P5** | Reporting + UI | `report/`, `desktop/`, templates, legal-format review | *unassigned* |
 | **P6** | ML + validation | `ml/`, `tools/make_corpus.py`, doc 6 execution | *unassigned* |
 
 ### P1 — Foundation & integration
@@ -1071,7 +1071,9 @@ this order, and keep Phase 0 deliberately small so Phases 1 and 3 start early.
 - [x] Persist to `identification`; audit `identify.complete` / `identify.ambiguous`.
 - [ ] **Tests:** S-10 must report ambiguity, not pick one · S-11 must report zero
       recordings · S-09 truncated must not crash · TC-RB-01/02 (zero-length, NTFS image).
-      *TC-RB-01/02 and ambiguity pass on in-test fixtures; S-09/S-10/S-11 wait on P6's corpus.*
+      *TC-RB-01/02 pass; S-11 reports unknown; S-09 parses without crashing and notes the
+      cut. S-10 is ambiguous only with a stand-in Hikvision plugin — with the shipping
+      registry it is a strict xfail until the Hikvision layout conflict is settled (§17 item 25).*
 - [ ] **Freeze contracts** at end of Phase 1 with P3/P4/P6 (§14). *Needs the team; draft
       additions in §17 item 12.*
 - **Done:** every corpus image classified correctly, zero false-confident
@@ -1219,11 +1221,13 @@ freeze needs the owner and every consumer to agree.
 ### 15.3 Planned CLI (doc 7 §5)
 
 Implemented so far: `case new|open|info|verify|custody|attach|chain`,
-`import image|files`, `identify [select]`, `parse`, `coverage`, `recover`, `list recordings`,
+`import image|files`, `identify [select|show]`, `parse`, `coverage`, `recover`,
+`list recordings|artifacts`,
 `export clip`, `time set|show`, `timeline`, `gaps`, `analyze motion`,
 `report generate|findings|certificate`, `verify chain`. Everything else below is planned.
 `import image` requires `--provenance A|B|C|D` (§17 item 14). `analyze motion` requires
-FFmpeg and refuses without it (§17 item 18).
+FFmpeg and refuses without it (§17 item 18). Every command the desktop app drives takes
+`--json`; `identify show` and `list artifacts` are read-only and write no audit record.
 
 ```
 spectra case new|open|info|attach|custody|verify
@@ -1370,6 +1374,42 @@ diverge from the docs.
     an audio export path would be written against an invented format. Needs a real `.dav`
     or Hikvision sample first (P2, doc 4 §12).
 
+**Raised while fixing the 2026-09-19 status review:**
+
+22. **Dahua export parsing splits a channel where its device time breaks** (plugin 0.2.0):
+    a step back, or a jump forward of more than 2 s (`MAX_CONTINUOUS_STEP`). One recording
+    spanning S-08's clock change used to end before it started and crashed `spectra gaps`.
+    The 2 s is a policy, not a format fact: the date field has 1 s resolution and the fps
+    extension is a whole number, so a stream slower than 1 frame/s would fragment frame by
+    frame, loudly. A segment that does not begin on an I-frame now says so in its notes.
+23. **New FR-55 anomaly kind `ends_before_start`** (negative finding
+    `NF-TIME-ENDS-BEFORE-START`), a new value in the P5 `findings.json` contract. Any plugin
+    can still produce such a recording — Hikvision passes an inverted index entry through
+    as-is — so timeline and gap analysis keep it off the axis and say so: `gap_report` gains
+    `not_placed`, listing every recording the gap figures do not cover, with the reason.
+24. **Motion rule pinned** (`ml/motion.py`): a pixel changed when `|Δ| >= sensitivity`,
+    box around every changed pixel, and the OpenCV path is held to the pure-Python reference
+    by a parity test. They had differed at the threshold and on small contours, so results
+    depended on whether OpenCV was installed. New `ml` extra (OpenCV + NumPy), installed in
+    CI. The motion model spec had claimed blur and morphological closing; it does neither.
+25. **Tier S oracles.** S-03 listed a surviving range of −13 086 bytes: its 16 KiB overwrite
+    runs past the end of its 5378-byte recording, so nothing after byte 2080 survives —
+    including the second I-frame. The oracle now says so, but S-03 cannot test "resume at
+    the next intact I-frame" (doc 1 §2.4); shortening the overwrite is P6's call. S-10's
+    ambiguity oracle fails with the shipping plugins for the same reason S-04/S-05 are not
+    recognised (Tier S puts the Hikvision magic at offset 0, the published layout at
+    0x210); it is a strict xfail until P6 and a Tier R disk settle which layout is real.
+
+26. **Desktop shell is Electron, not PySide6** (decided by the P1/P2 owner, 2026-09-19;
+    docs 1, 2, 3 and 8 updated). `desktop/` holds no forensic logic: every action runs
+    `python -m spectra.cli … --json` as a child process from a fixed argv built in the main
+    process, so each GUI action is an audited command anyone can re-run. Hardening: sandboxed
+    renderer, context isolation, UI and media served from two in-process schemes only
+    (media only by digest from the open case's artefact store), every other request
+    cancelled, and `host-resolver-rules` so no hostname resolves. No dev server: the renderer
+    is built and loaded from disk, so nothing listens on a socket. `ui/` in §12 is now
+    `desktop/` (P5). Packaging the Electron app with a bundled Python is still open (NFR-15).
+
 **Diagram ideas NOT adopted — research spikes only, never committed scope:**
 
 - XiongMai WFS support and a "shared DHFS = WFS descriptor core" — XiongMai isn't one of
@@ -1399,8 +1439,10 @@ ONNX detector licence · Q5 government TSA availability for RFC 3161.
   this file too.
 - **Claim only what has been run.** Phase 0 and parts of Phases 1 and 3 exist (§13.1). Don't
   claim a CLI command, test, or CI job works until it exists and has been run. Dev setup:
-  `python -m venv .venv`, `pip install -e ".[dev,ewf]"`, then `pytest`. FFmpeg tests skip
-  with a notice unless `SPECTRA_FFMPEG` or PATH provides FFmpeg.
+  `python -m venv .venv`, `pip install -e ".[dev,ewf,ml]"`, then `pytest`. FFmpeg tests skip
+  with a notice unless `SPECTRA_FFMPEG` or PATH provides FFmpeg; the motion parity tests
+  skip without OpenCV (`ml` extra). libewf-python has no wheel for Python 3.14 yet, so use
+  3.11–3.13 for the E01 tests.
 - **Format facts:** quote doc 4 with its label; never write "confirmed" for [R]/[H]/[U].
   Synthetic-only results must be labelled synthetic.
 - **Legal claims:** stick to the citations in §8.1; flag any new legal claim for review

@@ -707,7 +707,7 @@ Manager that binds them. Detailed design in [doc 3](03-architecture.md).
 | Video remux/transcode | **FFmpeg** (subprocess, pinned version, version recorded in report) | The only sane answer. Remux with `-c copy`. |
 | Case store | **SQLite** (WAL) + content-addressed file store | One file per case, portable, no server, well-understood by courts and labs. |
 | Analytics | **ONNX Runtime** + pinned YOLO-class detector; OpenCV for motion | CPU-first, GPU optional, no cloud, reproducible via model hash. |
-| GUI | **PySide6/Qt** desktop (offline-first) | Evidence machines are air-gapped. A desktop app is the correct shape; a browser app implies a server. |
+| GUI | **Electron** desktop (offline-first), driving the CLI | Evidence machines are air-gapped. A desktop app is the correct shape; a browser app implies a server. The shell loads nothing from the network and runs the audited CLI for every action (doc 3 §16). |
 | Reports | Jinja2 → HTML → **WeasyPrint** → PDF/A | Deterministic, no Word dependency, archival format. |
 | Packaging | PyInstaller single binary + offline wheel bundle | Air-gapped lab installation must not require pip. |
 

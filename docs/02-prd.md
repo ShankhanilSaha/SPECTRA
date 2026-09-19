@@ -333,7 +333,7 @@ cut from M8/M9 — never from M0, M2, or M7.
 **Dependencies**
 - Access to at least one Dahua-family and one Hikvision-family recorder + disk for
   format work. **This is the critical-path dependency** (risk R1, doc 1 §9).
-- FFmpeg (pinned build), libewf, ONNX Runtime, PySide6, SQLite.
+- FFmpeg (pinned build), libewf, ONNX Runtime, Electron (desktop shell), SQLite.
 - A hardware write blocker for validation of FR-12/AC-03.
 - A legal/examiner reviewer for G6 sign-off on the report format.
 

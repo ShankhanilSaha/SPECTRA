@@ -25,11 +25,12 @@ Five constraints determine every structural decision. Everything below follows f
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │  PRESENTATION                                                                │
-│   spectra.ui (PySide6 desktop)           spectra.cli (Typer)                  │
-│   case wizard · timeline · player ·      scriptable, same operations,         │
-│   review · report preview                headless, for batch/lab automation   │
+│   desktop/ (Electron, a CLI client)  ──▶ spectra.cli (Typer)                 │
+│   case wizard · timeline · player ·      scriptable, same operations,        │
+│   review · report preview                headless, for batch/lab automation  │
 └─────────────────────────────────┬────────────────────────────────────────────┘
-                                  │  both call the same service API. No logic in the UI.
+                                  │  the CLI calls the service API; the desktop app runs
+                                  │  the CLI with --json. No logic in the UI.
 ┌─────────────────────────────────▼────────────────────────────────────────────┐
 │  SERVICES  (spectra.services)                                                │
 │   CaseService · IdentifyService · AcquireService · ParseService ·             │
@@ -787,7 +788,7 @@ flowchart LR
 | Video | Bundled pinned **FFmpeg** | `-c copy` for evidence; version in report |
 | DB | SQLite (WAL) | One portable file per case |
 | Analytics | ONNX Runtime + OpenCV | CPU-first, GPU optional, offline |
-| GUI | PySide6 / Qt | Offline desktop is the correct shape for an evidence machine |
+| GUI | Electron + React (`desktop/`) | Offline desktop is the correct shape for an evidence machine. The app runs `spectra … --json` as a child process for every action: no server, no listening socket, nothing loaded from the network (see §16) |
 | Report | Jinja2 → WeasyPrint → PDF/A | Deterministic, archival |
 | Packaging | PyInstaller + offline wheelhouse | Air-gapped install |
 | Tests | pytest + synthetic corpus | doc 6 |
@@ -877,8 +878,11 @@ spectra/
 │       ├── report.html.j2
 │       └── bsa_63_4_certificate.html.j2    # FR-83
 ├── services/            # thin orchestrators, the API for UI and CLI
-├── ui/                  # PySide6
-└── cli.py               # Typer
+└── cli.py               # Typer — also the desktop app's only interface to the engine
+
+desktop/                 # Electron shell (TypeScript/React), a client of `spectra … --json`
+├── electron/            # main process: fixed argv per request, custom schemes, no network
+└── src/                 # renderer: screens follow doc 7 §4
 
 tools/
 ├── dump_signature.py    # FR-09 — bootstrap a new plugin
@@ -904,5 +908,6 @@ tests/
 | Negative findings auto-generated and non-deletable | Examiner writes the caveats | The tool knows what it failed to read; the examiner may not |
 | Analytics in a network-isolated process | Trust the code not to call out | "Cannot" beats "does not" when evidence is involved |
 | Desktop app, no server | Web UI | Evidence workstations are air-gapped; a server implies a network |
+| Desktop shell in Electron, driving the CLI as a child process | PySide6 in-process (the original choice) | Web tooling gives the timeline and player for less effort. Running the CLI keeps the UI logic-free by construction and makes every GUI action a command a defence expert can re-run. The shell is hardened: sandboxed renderer, own schemes only, all other requests cancelled, no hostname resolves (decided 2026-09-19) |
 | SQLite per case | Central database | Portability, court exhibits, no infrastructure in a district cyber cell |
 | MD5 computed but SHA-256 asserted | SHA-256 only | BSA certificate practice and legacy records still cite MD5; computing it costs nothing and its role is stated explicitly |

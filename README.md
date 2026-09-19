@@ -61,8 +61,8 @@ SPECTRA/
 │   ├── timeline/            # timestamp normalisation, multi-camera correlation
 │   ├── ml/                  # offline face / object / motion analytics
 │   ├── report/              # HTML/PDF report generation
-│   ├── cli.py
-│   └── ui/                  # desktop GUI
+│   └── cli.py
+├── desktop/                 # Electron GUI — a client of the spectra CLI (desktop/README.md)
 ├── tests/
 │   └── corpus/              # synthetic + ground-truth images (see doc 6)
 └── tools/                   # dataset generators, signature dumpers
