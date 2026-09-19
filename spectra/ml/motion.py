@@ -2,6 +2,22 @@
 
 Performs frame differencing with sensitivity control, minimum area gating, and ROI masking.
 Acts as Stage 1 filter: removes 80–99 % of inactive footage before heavier ML runs.
+
+## One definition, two implementations
+
+A frame pair is judged by exactly one rule, whichever implementation runs:
+
+* a pixel inside the ROI (clipped to the frame) has *changed* when
+  ``|current - previous| >= sensitivity``;
+* the frame has motion when at least ``min_area_pixels`` pixels changed;
+* the bounding box is the tight box around **every** changed pixel.
+
+`diff_frames_pure` is the reference. The OpenCV path is only a faster way of computing the
+same numbers, and `tests/test_ml_motion.py` holds the two to identical output. They used to
+differ — OpenCV's `THRESH_BINARY` keeps pixels strictly *above* the threshold, and the OpenCV
+path also dropped small contours — so the same recording gave different hits depending on
+whether OpenCV happened to be installed. That breaks determinism (NFR-08, AC-11). There is
+no noise suppression beyond `min_area_pixels`; adding any means adding it to both.
 """
 
 from __future__ import annotations
@@ -19,7 +35,7 @@ if TYPE_CHECKING:
 class MotionConfig:
     """Configuration parameters for motion activity detection."""
 
-    sensitivity: int = 25  # pixel delta threshold (1..255)
+    sensitivity: int = 25  # smallest pixel change counted as motion (1..255), inclusive
     min_area_pixels: int = 400  # min changed pixels to count as motion
     roi: tuple[int, int, int, int] | None = None  # (x, y, width, height)
     min_event_frames: int = 2  # min consecutive frames to declare an event
@@ -54,6 +70,24 @@ class MotionSegment:
         return max(0, self.end_pts_ms - self.start_pts_ms)
 
 
+def _check_geometry(prev_gray: bytes, curr_gray: bytes, width: int, height: int) -> None:
+    total_pixels = width * height
+    if len(prev_gray) != total_pixels or len(curr_gray) != total_pixels:
+        raise ValueError(
+            f"Buffer size {len(curr_gray)} does not match frame geometry {width}x{height}."
+        )
+
+
+def _roi_bounds(config: MotionConfig, width: int, height: int) -> tuple[int, int, int, int]:
+    """The ROI clipped to the frame, as (x0, y0, x1, y1) with x1/y1 exclusive.
+
+    Shared by both implementations so they can never disagree about which pixels count.
+    """
+    x0, y0, w_roi, h_roi = config.roi if config.roi is not None else (0, 0, width, height)
+    x0, y0 = max(0, x0), max(0, y0)
+    return x0, y0, max(x0, min(width, x0 + w_roi)), max(y0, min(height, y0 + h_roi))
+
+
 def diff_frames_pure(
     prev_gray: bytes,
     curr_gray: bytes,
@@ -61,22 +95,13 @@ def diff_frames_pure(
     height: int,
     config: MotionConfig,
 ) -> tuple[int, list[int] | None]:
-    """Pure-Python frame differencing fallback when OpenCV is unavailable.
+    """Reference implementation of the rule in the module docstring.
 
     Returns:
         (changed_pixel_count, bounding_box_as_[x, y, w, h] or None)
     """
-    total_pixels = width * height
-    if len(prev_gray) != total_pixels or len(curr_gray) != total_pixels:
-        raise ValueError(
-            f"Buffer size {len(curr_gray)} does not match frame geometry {width}x{height}."
-        )
-
-    x0, y0, w_roi, h_roi = (
-        config.roi if config.roi is not None else (0, 0, width, height)
-    )
-    x1 = min(width, x0 + w_roi)
-    y1 = min(height, y0 + h_roi)
+    _check_geometry(prev_gray, curr_gray, width, height)
+    x0, y0, x1, y1 = _roi_bounds(config, width, height)
 
     thresh = config.sensitivity
     changed_count = 0
@@ -106,6 +131,40 @@ def diff_frames_pure(
     return changed_count, bbox
 
 
+def diff_frames_opencv(
+    prev_gray: bytes,
+    curr_gray: bytes,
+    width: int,
+    height: int,
+    config: MotionConfig,
+) -> tuple[int, list[int] | None]:
+    """The same rule as `diff_frames_pure`, computed with OpenCV. Raises ImportError
+    when OpenCV or NumPy is not installed."""
+    import cv2
+    import numpy as np
+
+    _check_geometry(prev_gray, curr_gray, width, height)
+    x0, y0, x1, y1 = _roi_bounds(config, width, height)
+    if x1 <= x0 or y1 <= y0:
+        return 0, None
+
+    prev_arr = np.frombuffer(prev_gray, dtype=np.uint8).reshape((height, width))[y0:y1, x0:x1]
+    curr_arr = np.frombuffer(curr_gray, dtype=np.uint8).reshape((height, width))[y0:y1, x0:x1]
+
+    diff = cv2.absdiff(prev_arr, curr_arr)
+    # THRESH_BINARY keeps pixels strictly above the threshold; one less gives the inclusive
+    # `>= sensitivity` of the reference rule.
+    _, mask = cv2.threshold(diff, config.sensitivity - 1, 255, cv2.THRESH_BINARY)
+
+    changed_count = int(cv2.countNonZero(mask))
+    if changed_count == 0 or changed_count < config.min_area_pixels:
+        return changed_count, None
+
+    # On a single-channel image, boundingRect is the box around every non-zero pixel.
+    bx, by, bw, bh = cv2.boundingRect(mask)
+    return changed_count, [bx + x0, by + y0, bw, bh]
+
+
 def evaluate_frame_diff(
     prev_gray: bytes,
     curr_gray: bytes,
@@ -113,42 +172,12 @@ def evaluate_frame_diff(
     height: int,
     config: MotionConfig,
 ) -> tuple[int, list[int] | None]:
-    """Evaluate frame difference using OpenCV if available, otherwise pure Python."""
+    """Evaluate frame difference using OpenCV if available, otherwise pure Python.
+
+    Both give identical results; OpenCV is only faster.
+    """
     try:
-        import cv2
-        import numpy as np
-
-        prev_arr = np.frombuffer(prev_gray, dtype=np.uint8).reshape((height, width))
-        curr_arr = np.frombuffer(curr_gray, dtype=np.uint8).reshape((height, width))
-
-        if config.roi is not None:
-            rx, ry, rw, rh = config.roi
-            prev_arr = prev_arr[ry : ry + rh, rx : rx + rw]
-            curr_arr = curr_arr[ry : ry + rh, rx : rx + rw]
-        else:
-            rx, ry = 0, 0
-
-        diff = cv2.absdiff(prev_arr, curr_arr)
-        _, thresh = cv2.threshold(diff, config.sensitivity, 255, cv2.THRESH_BINARY)
-        contours, _ = cv2.findContours(
-            thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-
-        changed_count = int(cv2.countNonZero(thresh))
-        if changed_count < config.min_area_pixels or not contours:
-            return changed_count, None
-
-        # Compute union bounding box
-        boxes = [cv2.boundingRect(c) for c in contours if cv2.contourArea(c) > 50]
-        if not boxes:
-            return changed_count, None
-
-        bx0 = min(b[0] for b in boxes) + rx
-        by0 = min(b[1] for b in boxes) + ry
-        bx1 = max(b[0] + b[2] for b in boxes) + rx
-        by1 = max(b[1] + b[3] for b in boxes) + ry
-        return changed_count, [bx0, by0, bx1 - bx0, by1 - by0]
-
+        return diff_frames_opencv(prev_gray, curr_gray, width, height, config)
     except ImportError:
         return diff_frames_pure(prev_gray, curr_gray, width, height, config)
 

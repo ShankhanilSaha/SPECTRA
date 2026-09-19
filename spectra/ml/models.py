@@ -68,7 +68,10 @@ BUILTIN_MOTION_SPEC = ModelSpec(
     sha256="0" * 64,  # Builtin algorithmic method
     license="Apache-2.0",
     framework="builtin",
-    description="Frame differencing with Gaussian blur and morphological closing (no ML).",
+    description=(
+        "Greyscale frame differencing: a pixel has changed when it moved by at least the "
+        "sensitivity; motion when at least min_area_pixels changed (no ML, no smoothing)."
+    ),
 )
 
 
