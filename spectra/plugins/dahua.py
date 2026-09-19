@@ -41,7 +41,7 @@ from __future__ import annotations
 import struct
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import ClassVar
 
 from spectra.core.models import (
@@ -88,6 +88,12 @@ EXT_SIZES: dict[int, int] = {
 EXPORT_MEMBER_CHECK_LIMIT = 256
 EXPORT_HEAD_SCAN = 64 * 1024
 MAX_VALIDATIONS_PER_REGION = 64
+# Not a format fact: the largest forward step in one channel's device time that still
+# counts as continuous recording. The date field has 1 s resolution and the fps extension
+# is a whole number (≥ 1 frame/s), so consecutive frames differ by at most 1 s, or 2 s with
+# timing jitter at 1 fps. A stream recorded slower than that is split frame by frame, each
+# split noted: fragmented, never a false interval.
+MAX_CONTINUOUS_STEP = timedelta(seconds=2)
 MAX_MATCHES_SHOWN = 4
 SOURCE_NOTE_LABEL = "DHAV field layout per doc 4 §3.2 [R], not yet hardware-verified"
 
@@ -317,6 +323,29 @@ class _ChannelRun:
     fps: int | None = None
     video_frames: int = 0
     unknown_ext: set[int] = field(default_factory=set)
+    first_kind: FrameKind | None = None
+    notes: list[str] = field(default_factory=list)
+
+    def discontinuity(self, frame: Frame) -> tuple[datetime, datetime] | None:
+        """(this run's latest device time, `frame`'s), if `frame` is a video frame whose
+        time does not continue the run: earlier than it, or later by more than
+        `MAX_CONTINUOUS_STEP`.
+
+        Frames are walked in the order the device wrote them, and the known DHAV video
+        types are I and P only, so write order is capture order. One recording cannot span
+        a step back: its end would precede its start. Nor can it span a jump forward: it
+        would claim footage for a period it holds none of, hiding a hole from gap analysis.
+        Splitting on both also contains a single frame with a corrupt date, which would
+        otherwise stretch its segment's interval to that date.
+        """
+        if frame.kind not in VIDEO_KINDS or frame.t_device is None:
+            return None
+        if self.last is None or self.last.local is None or frame.t_device.local is None:
+            return None
+        before, after = self.last.local, frame.t_device.local
+        if before <= after <= before + MAX_CONTINUOUS_STEP:
+            return None
+        return before, after
 
     def add(self, header: DhavHeader, frame: Frame) -> None:
         span = frame.extent
@@ -327,6 +356,7 @@ class _ChannelRun:
             self.spans.append(span)
         if frame.kind not in VIDEO_KINDS:
             return
+        self.first_kind = self.first_kind or frame.kind
         self.video_frames += 1
         if frame.t_device is not None and frame.t_device.local is not None:
             self.first = self.first or frame.t_device
@@ -368,7 +398,9 @@ def _match_pair(src: EvidenceSource, header: DhavHeader, where: str) -> list[Sig
 class DahuaPlugin:
     family: ClassVar[str] = "dahua"
     layout_versions: ClassVar[tuple[str, ...]] = (LAYOUT_DAV_EXPORT,)
-    plugin_version: ClassVar[str] = "0.1.0"
+    # 0.2.0: a channel's recording is split where its device time steps back or jumps
+    # forward (MAX_CONTINUOUS_STEP); recordings not starting on an I-frame say so.
+    plugin_version: ClassVar[str] = "0.2.0"
 
     # -- Q1 ---------------------------------------------------------------------------
     @classmethod
@@ -502,7 +534,10 @@ class DahuaPlugin:
         self, src: EvidenceSource, path: str, extent: Extent
     ) -> Iterator[Recording]:
         """One recording per channel per unbroken segment of the file. A skipped region
-        (bytes that are not valid frames) closes the segment and is reported in `notes`."""
+        (bytes that are not valid frames) closes the segment and is reported in `notes`.
+        So does a break in a channel's device time (see `_ChannelRun.discontinuity`), for
+        that channel only; the contradiction itself is left to the FR-55 anomaly detectors
+        and gap analysis to report."""
         runs: dict[int, _ChannelRun] = {}
         cursor = extent.offset
         leading_gap: int | None = None
@@ -514,6 +549,21 @@ class DahuaPlugin:
                 else:
                     yield from self._emit(path, runs, closing_gap=gap)
                     runs = {}
+            run = runs.get(header.channel)
+            broken = run.discontinuity(frame) if run is not None else None
+            if run is not None and broken is not None:
+                before, after = broken
+                seconds = abs((after - before).total_seconds())
+                step = (f"{'back' if after < before else 'forward'} {seconds:.0f} s, from "
+                        f"{before.isoformat()} to {after.isoformat()}, at offset "
+                        f"{frame.extent.offset}")
+                run.notes.append(f"device time steps {step}, after this segment; the frames "
+                                 "from there on are reported as a separate recording")
+                yield from self._emit(path, {header.channel: run}, closing_gap=None)
+                runs[header.channel] = _ChannelRun(notes=[
+                    f"device time steps {step}, at the start of this segment; the frames "
+                    "before it on this channel are reported as a separate recording"
+                ])
             runs.setdefault(header.channel, _ChannelRun()).add(header, frame)
             cursor = header.offset + header.length
         trailing = Extent(cursor, extent.end - cursor) if cursor < extent.end else None
@@ -538,6 +588,10 @@ class DahuaPlugin:
                     f"{closing_gap.length} byte(s) at offset {closing_gap.offset} after this "
                     "segment are not valid DHAV frames"
                 )
+            if run.first_kind != "I":
+                notes.append("the first video frame is not an I-frame: frames before the "
+                             "first I-frame depend on earlier data and will not decode from "
+                             "this recording alone")
             if run.first is None:
                 notes.append("no frame carried a decodable date-time: time unknown")
             if run.codec is None:
@@ -547,6 +601,7 @@ class DahuaPlugin:
             if run.unknown_ext:
                 notes.append("unrecognised DHAV extension type(s): "
                              + ", ".join(f"0x{t:02X}" for t in sorted(run.unknown_ext)))
+            notes += run.notes
             yield Recording(
                 channel=channel,
                 stream="unknown",

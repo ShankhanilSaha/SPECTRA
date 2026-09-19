@@ -8,7 +8,7 @@ import dataclasses
 import os
 import random
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -181,6 +181,86 @@ def test_enumerate_export_files_per_channel_with_times_and_notes(tmp_path):
     assert first.extents == (Extent(0, len(a)),)
     assert len(recordings[1].extents) == 5  # interleaved channel: one extent per frame
     assert any("50 byte(s)" in n for n in recordings[2].notes)
+
+
+def test_a_backwards_step_in_device_time_splits_only_that_channel(tmp_path):
+    """One recording across the step would end before it starts (FR-55; the Tier S S-08
+    shape). The other channel, whose clock is steady, stays one recording."""
+    def dated(i, channel, moment, key):
+        unit, _ = UNITS[i]
+        return dhavgen.frame(unit, frame_type=dhavgen.I_FRAME if key else dhavgen.P_FRAME,
+                             channel=channel, seq=i, date=dhavgen.pack_date(moment),
+                             ext=dhavgen.video_ext() if key else b"")
+
+    t14, t12 = datetime(2026, 3, 5, 14, 0, 0), datetime(2026, 3, 5, 12, 0, 0)
+    body = b"".join(
+        dated(i, 0, t14 + timedelta(seconds=i), i == 0)
+        + dated(i, 1, (t14 if i < 4 else t12) + timedelta(seconds=i), i in (0, 4))
+        for i in range(8)
+    )
+    root = export_dir(tmp_path, {"a.dav": body})
+    src = FileSetSource(root)
+    plugin = DahuaPlugin()
+    recordings = list(plugin.enumerate(src, plugin.superblock(src), include_orphans=False))
+
+    summary = [(r.channel, r.frame_count, r.t_start.local, r.t_end.local) for r in recordings]
+    assert summary == [
+        (1, 4, t14, t14 + timedelta(seconds=3)),
+        (0, 8, t14, t14 + timedelta(seconds=7)),
+        (1, 4, t12 + timedelta(seconds=4), t12 + timedelta(seconds=7)),
+    ]
+    step = "device time steps back 7199 s, from 2026-03-05T14:00:03 to 2026-03-05T12:00:04"
+    assert any(step in n and "after this segment" in n for n in recordings[0].notes)
+    assert any(step in n and "at the start of this segment" in n for n in recordings[2].notes)
+    assert not any("device time steps" in n for n in recordings[1].notes)
+    # every byte in exactly one recording: no frame lost or counted twice
+    assert sum(e.length for r in recordings for e in r.extents) == src.size
+
+
+def test_one_frame_with_a_stray_date_is_contained_rather_than_stretching_a_recording(
+    tmp_path,
+):
+    """A single frame dated 2030 in a 14:00 stream. Split only on steps back, the first
+    segment would run from 14:00 to 2030; split on jumps forward as well, the stray frame
+    stands alone and every interval stays true."""
+    t14 = datetime(2026, 3, 5, 14, 0, 0)
+    stray = datetime(2030, 1, 1, 0, 0, 0)
+    body = b"".join(
+        dhavgen.frame(unit, frame_type=dhavgen.I_FRAME if key else dhavgen.P_FRAME, seq=i,
+                      date=dhavgen.pack_date(stray if i == 5 else t14 + timedelta(seconds=i)),
+                      ext=dhavgen.video_ext() if key else b"")
+        for i, (unit, key) in enumerate(UNITS[:10])
+    )
+    src = FileSetSource(export_dir(tmp_path, {"a.dav": body}))
+    plugin = DahuaPlugin()
+    recordings = list(plugin.enumerate(src, plugin.superblock(src), include_orphans=False))
+
+    assert [(r.frame_count, r.t_start.local, r.t_end.local) for r in recordings] == [
+        (5, t14, t14 + timedelta(seconds=4)),
+        (1, stray, stray),
+        (4, t14 + timedelta(seconds=6), t14 + timedelta(seconds=9)),
+    ]
+    assert any("device time steps forward" in n for n in recordings[0].notes)
+    assert any("device time steps back" in n for n in recordings[2].notes)
+    # the stray frame and the frames after it are P-frames: they cannot decode alone
+    for recording in recordings[1:]:
+        assert any("not an I-frame" in n for n in recording.notes)
+    assert not any("not an I-frame" in n for n in recordings[0].notes)
+
+
+def test_steps_within_the_date_resolution_do_not_split(tmp_path):
+    """Frames 2 s apart (1 fps with jitter, at 1 s date resolution) are still one run."""
+    t14 = datetime(2026, 3, 5, 14, 0, 0)
+    body = b"".join(
+        dhavgen.frame(unit, frame_type=dhavgen.I_FRAME if key else dhavgen.P_FRAME, seq=i,
+                      date=dhavgen.pack_date(t14 + timedelta(seconds=2 * i)),
+                      ext=dhavgen.video_ext() if key else b"")
+        for i, (unit, key) in enumerate(UNITS[:10])
+    )
+    src = FileSetSource(export_dir(tmp_path, {"a.dav": body}))
+    plugin = DahuaPlugin()
+    (recording,) = plugin.enumerate(src, plugin.superblock(src), include_orphans=False)
+    assert recording.frame_count == 10
 
 
 def test_superblock_refuses_raw_disk_without_verified_layout(tmp_path):
