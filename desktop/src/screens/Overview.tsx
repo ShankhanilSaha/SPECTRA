@@ -2,7 +2,8 @@ import { bytes } from "../format";
 import { Badge, Button, CliHint, Hash, KeyValues, Loading, Notice, Panel } from "../components/ui";
 import { StepPage } from "../components/StepNav";
 import { go, useCase } from "../state";
-import { nextStep, stepDef, stepStatus, type StepId } from "../steps";
+import { stepDef, stepStatus, type StepId } from "../steps";
+import { caseGaps, focus, readiness, type Gap } from "../gaps";
 import type { EvidenceProgress } from "../types";
 
 export function Overview() {
@@ -10,7 +11,7 @@ export function Overview() {
   const meta = c.info?.case;
   return (
     <StepPage step="overview" lead={<span className="path">{c.dir}</span>}>
-      <NextCard />
+      <ReadinessCard />
       <Panel title="Evidence items">
         {!c.info ? (
           <Loading />
@@ -64,44 +65,66 @@ export function Overview() {
   );
 }
 
-/** Where the examination stands, and the one thing to do next. */
-function NextCard() {
+/**
+ * What this case still needs.
+ *
+ * This replaced a "next step" card that scanned steps 1→11 and pointed at the first one
+ * still open — which, on a case that has been parsed, timed and recovered, would send the
+ * examiner back to step 2 for scene documents. It answered "where am I in the list?" when
+ * the real question is "can I sign the report yet, and if not, what is missing?"
+ */
+function ReadinessCard() {
   const c = useCase();
   if (!c.info) return null;
-  const next = nextStep(c.info.progress, c.marks, c.evidenceId);
-  if (!next) {
+  const gaps = caseGaps(c.info.progress);
+  const state = readiness(gaps);
+  const first = focus(gaps, c.evidenceId);
+
+  const open = (g: Gap) => {
+    if (g.evidenceId) c.setEvidenceId(g.evidenceId);
+    go(g.step);
+  };
+
+  if (!gaps.length) {
     return (
       <div className="next-card done">
         <div>
-          <div className="eyebrow">Every step has been run</div>
-          <h2>Read the report's §7 negative findings before you sign.</h2>
+          <div className="eyebrow">Ready to report</div>
+          <h2>Nothing is outstanding on this case.</h2>
+          <p>Read §7 negative findings before you sign — they say what the tool could not do.</p>
         </div>
-        <Button kind="primary" onClick={() => go("report")}>Open the report step →</Button>
+        <Button kind="primary" onClick={() => go("report")}>Open the report →</Button>
       </div>
     );
   }
-  const def = stepDef(next.step);
-  const ev = c.info.progress.evidence.find((e) => e.evidence_id === next.evidenceId) ?? null;
-  const status = stepStatus(next.step, c.info.progress, ev, c.marks);
+
   return (
-    <div className="next-card">
-      <div>
-        <div className="eyebrow">
-          Next · step {def.n}
-          {next.evidenceId ? ` · ${next.evidenceId}` : ""}
+    <div className="readiness">
+      <div className="readiness-head">
+        <div>
+          <div className="eyebrow">This case is {state.label}</div>
+          <h2>{gaps.length} thing{gaps.length === 1 ? "" : "s"} still outstanding</h2>
         </div>
-        <h2>{def.title}</h2>
-        <p>{def.purpose} <span className="muted">({status.summary})</span></p>
+        {first && (
+          <Button kind="primary" onClick={() => open(first)}>
+            {first.title.length > 42 ? "Start with the first" : `Go to ${stepDef(first.step).title}`} →
+          </Button>
+        )}
       </div>
-      <Button
-        kind="primary"
-        onClick={() => {
-          if (next.evidenceId) c.setEvidenceId(next.evidenceId);
-          go(next.step);
-        }}
-      >
-        Go to {def.title} →
-      </Button>
+      <ul className="gap-list">
+        {gaps.map((g) => (
+          <li key={g.id} className={`gap gap-${g.weight}`}>
+            <button type="button" className="gap-open" onClick={() => open(g)}>
+              <span className="gap-weight">{g.weight}</span>
+              <span className="gap-text">
+                <span className="gap-title">{g.title}</span>
+                <span className="gap-why">{g.why}</span>
+              </span>
+              {g.becomes && <span className="gap-code" title="The negative finding this becomes if the report is generated as it stands">{g.becomes}</span>}
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
