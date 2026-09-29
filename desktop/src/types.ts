@@ -25,7 +25,47 @@ export interface EvidenceItem {
 export interface CaseInfo {
   case: CaseMeta;
   evidence: EvidenceItem[];
+  progress: CaseProgress;
   audit_head: { seq: number; digest: string };
+}
+
+/** `case info --json` → progress: what has been run and what exists (services/progress.py). */
+export interface CaseProgress {
+  attachments: {
+    id: string;
+    kind: string;
+    filename: string;
+    description: string;
+    provided_by: string;
+    statutory_ref: string;
+    sha256: string;
+    size_bytes: number;
+    evidence_id: string | null;
+    attached_utc: string;
+  }[];
+  evidence: EvidenceProgress[];
+  exported_recordings: number;
+  annotations: number;
+  analysed_recordings: number;
+  reports_generated: number;
+  last_report_utc: string | null;
+  certificates_prepared: number;
+}
+
+export interface EvidenceProgress {
+  evidence_id: string;
+  custody_entries: number;
+  identification: { status: string; support: Support; family: string | null; layout_version: string | null } | null;
+  parsed: boolean;
+  time_observations: number;
+  recovered: boolean;
+  last_recover: RecoverSummary | null;
+  recordings: {
+    total: number;
+    by_tier: Record<string, number>;
+    with_device_time: number;
+    with_reference_time: number;
+  };
 }
 
 export interface VerifyResult {

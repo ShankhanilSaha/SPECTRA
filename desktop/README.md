@@ -1,8 +1,23 @@
 # SPECTRA desktop
 
 The examiner's GUI: an Electron + React shell over the `spectra` CLI. It follows the doc 7 §4
-walkthrough, one screen per step: case → documents & custody → evidence → identify →
+walkthrough as one path, one screen per step: case → scene documents → evidence → identify →
 parse → time model → recover → timeline → analytics → review & export → report.
+
+- **The sidebar shows where the case stands.** Each step carries a status read from the
+  case (`spectra case info --json` → `progress`): done, to do, needs a decision, skipped,
+  not applicable (a carve-only disk has nothing to parse), or not yet possible. Steps 4–7
+  work on one evidence item at a time; the item is chosen in the sidebar.
+- **Every step ends with the way on.** "Continue to …" at the foot of each screen. A step it
+  is legitimate to leave undone (no scene documents yet, no clock offset) says so ("Continue
+  without an offset") and is remembered as skipped, so the case overview's *Next* card stops
+  pointing at it. Nothing is skipped silently.
+- **Importing evidence identifies it straight away** and opens the result (doc 7 §4 step 4).
+- **Long steps keep running when you leave them.** Recovery, export, report generation and
+  motion analysis belong to the case, not the screen: move on, and the sidebar shows the
+  step running and then done.
+- **Screens do not blank while they reload.** Each read is cached by request and refreshed
+  after every change, so a screen shows what it last showed until the newer answer arrives.
 
 **It holds no forensic logic.** Every action runs `python -m spectra.cli … --json` as a child
 process and renders what comes back (doc 3 §2, §16). So every click is an audited command
@@ -31,10 +46,14 @@ digitally signed") and the venv's `Activate.ps1`. Use `npm.cmd install` / `npm.c
 and call `.venv\Scripts\python.exe -m pip …` directly instead of activating. Neither needs a
 policy change.
 
-The app looks for Python in `SPECTRA_PYTHON`, then `python` on PATH, and for the package in
-the repository root. Change either in **File → Settings**, which also shows whether the
-engine and FFmpeg were found. Without FFmpeg, export gives the elementary stream only (no
-MP4), and motion analysis refuses to run.
+The app looks for Python in `SPECTRA_PYTHON`, then the repository's `.venv`, then `python`
+on PATH, and for the package in the repository root. Change either in **File → Settings**,
+which also shows whether the engine and FFmpeg were found. If the saved Python cannot run
+spectra (a deleted virtual environment, say), the app says so on a screen of its own, with
+the error, instead of showing empty steps; if the repository's `.venv` works it offers it
+with one click. It never switches interpreter on its own. It offers the development FFmpeg
+from `imageio-ffmpeg` the same way. Without FFmpeg, export gives the elementary stream only
+(no MP4), and motion analysis refuses to run.
 
 ## How it is put together
 
@@ -48,7 +67,12 @@ desktop/
 │   ├── settings.ts      Python / FFmpeg / operator settings, environment check
 │   ├── preload.ts       the bridge exposed to the renderer
 │   └── smoke.ts         screenshot every screen of a case (development check)
-└── src/                 React renderer: screens/, components/, api.ts, state.tsx
+└── src/
+    ├── steps.ts         the eleven steps, and each one's status from the case's progress
+    ├── state.tsx        the open case, its tasks, and the window's per-case memory
+    ├── api.ts           CLI calls, the command log, the read cache
+    ├── screens/         one per step, plus welcome, engine setup, settings, command log
+    └── components/      StepPage / StepNav (the frame and foot of every step), timeline, …
 ```
 
 Offline and read-only by construction:
@@ -74,7 +98,8 @@ SPECTRA_UI_SMOKE_CASE=<case dir> SPECTRA_UI_SMOKE_OUT=<out dir> npm run smoke
 
 This opens the case, visits every screen, and writes one PNG per screen plus the renderer
 console to `console.log`. The window appears briefly: a hidden window cannot be captured on
-Windows.
+Windows. A smoke run keeps its settings in `<out dir>/user-data`, so it neither uses nor
+changes yours; set `SPECTRA_PYTHON` / `SPECTRA_FFMPEG` if the defaults do not apply.
 
 ## Not in this prototype
 

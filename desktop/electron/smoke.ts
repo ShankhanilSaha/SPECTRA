@@ -5,7 +5,9 @@
  *
  *   SPECTRA_UI_SMOKE_CASE    case directory to open
  *   SPECTRA_UI_SMOKE_OUT     where the PNGs and console.log go
- *   SPECTRA_UI_SMOKE_ROUTES  optional comma-separated route list
+ *   SPECTRA_UI_SMOKE_ROUTES  optional comma-separated list of steps, each a route
+ *                            ("identify") or "click:<css selector>" to press a button on
+ *                            the current screen and capture what follows
  */
 
 import fs from "node:fs";
@@ -48,10 +50,20 @@ export async function runSmoke(win: BrowserWindow, outDir: string): Promise<void
 
   const routes = process.env.SPECTRA_UI_SMOKE_ROUTES?.split(",").filter(Boolean) ?? ROUTES;
   for (const [i, route] of routes.entries()) {
-    await win.webContents.executeJavaScript(`window.location.hash = ${JSON.stringify(`#/${route}`)}`);
+    if (route.startsWith("click:")) {
+      const selector = route.slice("click:".length);
+      const clicked = (await win.webContents.executeJavaScript(
+        `(() => { const b = document.querySelector(${JSON.stringify(selector)}); if (!b) return "NOT FOUND";` +
+          ` const text = b.textContent; const disabled = b.disabled; b.click(); return (disabled ? "DISABLED " : "clicked ") + JSON.stringify(text); })()`,
+      )) as string;
+      log.push(`[smoke] ${clicked} ${selector}`);
+    } else {
+      await win.webContents.executeJavaScript(`window.location.hash = ${JSON.stringify(`#/${route}`)}`);
+    }
     await settle(win);
     const image = await win.webContents.capturePage();
-    const name = `${String(i + 1).padStart(2, "0")}-${route}.png`;
+    const label = route.startsWith("click:") ? "click" : route;
+    const name = `${String(i + 1).padStart(2, "0")}-${label}.png`;
     fs.writeFileSync(path.join(outDir, name), image.toPNG());
     log.push(`[smoke] captured ${name} (${image.getSize().width}x${image.getSize().height})`);
   }

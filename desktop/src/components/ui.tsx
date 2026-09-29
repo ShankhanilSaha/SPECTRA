@@ -16,15 +16,16 @@ export function Panel(props: { title?: ReactNode; actions?: ReactNode; children:
   );
 }
 
-export function Page(props: { title: string; step?: number; lead?: ReactNode; children: ReactNode }) {
+export function Page(props: { title: string; eyebrow?: ReactNode; lead?: ReactNode; aside?: ReactNode; children: ReactNode }) {
   return (
     <div className="page">
       <header className="page-head">
-        <h1>
-          {props.step !== undefined && <span className="step-no">{props.step}</span>}
-          {props.title}
-        </h1>
-        {props.lead && <p className="lead">{props.lead}</p>}
+        <div className="page-head-text">
+          {props.eyebrow && <div className="eyebrow">{props.eyebrow}</div>}
+          <h1>{props.title}</h1>
+          {props.lead && <p className="lead">{props.lead}</p>}
+        </div>
+        {props.aside && <div className="page-head-aside">{props.aside}</div>}
       </header>
       {props.children}
     </div>
@@ -104,15 +105,16 @@ export function SeverityBadge(props: { severity: string }) {
   return <Badge tone={tone}>{props.severity}</Badge>;
 }
 
-/** A digest shown in full, monospace, selectable, with a copy button. */
-export function Hash(props: { value: string | null | undefined; label?: string }) {
+/** A digest, monospace, with a copy button that always copies it in full. `short` shows
+ * the ends only, for tables; the full value is in the tooltip and the copy. */
+export function Hash(props: { value: string | null | undefined; label?: string; short?: boolean }) {
   const [copied, setCopied] = useState(false);
   if (!props.value) return <span className="muted">—</span>;
   const value = props.value;
   return (
     <span className="hash">
       {props.label && <span className="hash-label">{props.label}</span>}
-      <code>{value}</code>
+      <code title={props.short ? value : undefined}>{props.short ? `${value.slice(0, 12)}…${value.slice(-6)}` : value}</code>
       <button
         type="button"
         className="copy"

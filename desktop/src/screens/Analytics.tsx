@@ -1,10 +1,10 @@
-import { useState } from "react";
-
 import { run, useCli } from "../api";
 import { RecordingPicker } from "../components/RecordingPicker";
-import { Badge, Button, CliHint, Empty, Field, KeyValues, Loading, Notice, Page, Panel, useAction } from "../components/ui";
+import { StepPage } from "../components/StepNav";
+import { Badge, Button, CliHint, Empty, Field, KeyValues, Loading, Notice, Panel } from "../components/ui";
 import type { MotionResult, Recording } from "../types";
-import { routeParam, useCase } from "../state";
+import { useCase, useSessionState, useTask } from "../state";
+import { useRecordingChoice } from "./Export";
 
 const DISCLAIMER =
   "Machine-generated detection. Requires human verification against the source frame. Not an identification.";
@@ -16,27 +16,23 @@ function clock(ms: number): string {
 
 export function Analytics() {
   const c = useCase();
-  const recordings = useCli<Recording[]>({ kind: "listRecordings", case: c.dir, evidence: null }, `${c.dir}|${c.version}`);
-  const [rec, setRec] = useState<string | null>(routeParam("rec"));
-  const [sensitivity, setSensitivity] = useState(25);
-  const [minArea, setMinArea] = useState(400);
-  const [result, setResult] = useState<MotionResult | null>(null);
-  const action = useAction(
-    () => run<MotionResult>({ kind: "analyzeMotion", case: c.dir, recording: rec!, sensitivity, minArea }),
-    (r) => {
-      setResult(r);
-      c.changed();
-    },
-  );
+  const recordings = useCli<Recording[]>({ kind: "listRecordings", case: c.dir, evidence: null }, c.version);
+  const [rec, setRec] = useRecordingChoice("analytics:rec");
+  const [settings, setSettings] = useSessionState("analytics:settings", { sensitivity: 25, minArea: 400 });
+  const task = useTask<MotionResult>(`motion:${rec}`);
+  const result = task.result;
 
   return (
-    <Page step={9} title="Analytics" lead="Motion first: it removes most of the footage from review. Everything here is a lead for a human to check, never an identification.">
+    <StepPage
+      step="analytics"
+      lead="Optional. Motion first: it removes most of the footage from review. Everything here is a lead for a human to check, never an identification."
+    >
       <Notice tone="warn" title="Leads, not identifications">
         There is no watchlist and no identity database in this tool, deliberately. Every hit carries its model name, model hash and confidence, and must be verified against the source frame before it enters a report.
       </Notice>
       <div className="grid-2">
         <Panel title="Motion / activity (FR-90)">
-          {recordings.loading && !recordings.data ? (
+          {recordings.loading ? (
             <Loading />
           ) : !recordings.data?.length ? (
             <Empty>No recordings to analyse.</Empty>
@@ -47,17 +43,24 @@ export function Analytics() {
                   <RecordingPicker rows={recordings.data} value={rec} onChange={setRec} />
                 </Field>
                 <Field label="Sensitivity" hint="Smallest pixel change counted (1–255), inclusive">
-                  <input type="number" min={1} max={255} value={sensitivity} onChange={(e) => setSensitivity(Number(e.target.value))} />
+                  <input type="number" min={1} max={255} value={settings.sensitivity} onChange={(e) => setSettings({ ...settings, sensitivity: Number(e.target.value) })} />
                 </Field>
                 <Field label="Minimum area" hint="Changed pixels needed for a frame to count as motion">
-                  <input type="number" min={0} value={minArea} onChange={(e) => setMinArea(Number(e.target.value))} />
+                  <input type="number" min={0} value={settings.minArea} onChange={(e) => setSettings({ ...settings, minArea: Number(e.target.value) })} />
                 </Field>
               </div>
-              {action.error && <Notice tone="error">{action.error}</Notice>}
+              {task.error && <Notice tone="error">{task.error}</Notice>}
               <div className="form-actions">
-                <Button kind="primary" onClick={action.run} busy={action.busy} disabled={!rec}>Run motion analysis</Button>
+                <Button
+                  kind="primary"
+                  onClick={() => task.run(() => run<MotionResult>({ kind: "analyzeMotion", case: c.dir, recording: rec!, ...settings }))}
+                  busy={task.busy}
+                  disabled={!rec}
+                >
+                  {task.busy ? "Decoding and differencing…" : "Run motion analysis"}
+                </Button>
               </div>
-              <CliHint>{`spectra analyze motion ${rec ?? "REC-…"} --sensitivity ${sensitivity} --min-area ${minArea}`}</CliHint>
+              <CliHint>{`spectra analyze motion ${rec ?? "REC-…"} --sensitivity ${settings.sensitivity} --min-area ${settings.minArea}`}</CliHint>
             </>
           )}
         </Panel>
@@ -98,6 +101,6 @@ export function Analytics() {
           <KeyValues rows={[["Disclaimer (printed with every hit)", DISCLAIMER]]} />
         </Panel>
       )}
-    </Page>
+    </StepPage>
   );
 }

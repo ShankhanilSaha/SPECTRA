@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
+import type { EnvironmentCheck } from "../shared/api";
 import { bridge, errorText, useCommandLog } from "./api";
 import { Badge } from "./components/ui";
 import { Analytics } from "./screens/Analytics";
 import { Documents } from "./screens/Documents";
+import { EngineSetup, Starting } from "./screens/EngineSetup";
 import { Evidence } from "./screens/Evidence";
 import { ExportScreen } from "./screens/Export";
 import { Identify } from "./screens/Identify";
@@ -16,27 +18,19 @@ import { SettingsScreen } from "./screens/Settings";
 import { TimelineScreen } from "./screens/TimelineScreen";
 import { TimeModel } from "./screens/TimeModel";
 import { Welcome } from "./screens/Welcome";
-import { CaseProvider, useCase, useOptionalCase, useRoute } from "./state";
-
-const STEPS: { route: string; label: string; step: number }[] = [
-  { route: "overview", label: "Case", step: 1 },
-  { route: "documents", label: "Documents & custody", step: 2 },
-  { route: "evidence", label: "Evidence", step: 3 },
-  { route: "identify", label: "Identify", step: 4 },
-  { route: "parse", label: "Parse & recordings", step: 5 },
-  { route: "time", label: "Time model", step: 6 },
-  { route: "recover", label: "Recover", step: 7 },
-  { route: "timeline", label: "Timeline", step: 8 },
-  { route: "analytics", label: "Analytics", step: 9 },
-  { route: "export", label: "Review & export", step: 10 },
-  { route: "report", label: "Report", step: 11 },
-];
+import { CaseProvider, useCase, useOptionalCase, useRoute, useTaskBusy } from "./state";
+import { GROUP_TITLE, nextStep, STEPS, stepStatus, type StepDef, type StepGroup, type StepStatus } from "./steps";
 
 export function App() {
   const [caseDir, setCaseDir] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
+  const [env, setEnv] = useState<EnvironmentCheck | null>(null);
   const [route, navigate] = useRoute();
-  const [welcomeMode, setWelcomeMode] = useState<"open" | "new">("open");
+
+  const recheck = useCallback(async () => setEnv(await bridge.checkEnvironment()), []);
+  useEffect(() => {
+    void recheck();
+  }, [recheck]);
 
   const openCase = useCallback(
     async (dir: string) => {
@@ -46,7 +40,7 @@ export function App() {
         setCaseDir(dir);
         navigate("overview");
       } catch (err) {
-        setOpenError(errorText(err).replace(/^Error invoking remote method '[^']+': (Error: )?/, ""));
+        setOpenError(errorText(err));
       }
     },
     [navigate],
@@ -54,7 +48,8 @@ export function App() {
   const closeCase = useCallback(() => {
     setCaseDir(null);
     void bridge.setActiveCase(null);
-  }, []);
+    navigate("welcome");
+  }, [navigate]);
 
   useEffect(() => {
     const fromQuery = new URLSearchParams(window.location.search).get("case");
@@ -67,11 +62,8 @@ export function App() {
         if (action === "settings") navigate("settings");
         else if (action === "log") navigate("log");
         else if (action === "closeCase") closeCase();
-        else if (action === "newCase") {
-          closeCase();
-          setWelcomeMode("new");
-          navigate("welcome");
-        } else if (action === "openCase") {
+        else if (action === "newCase") closeCase();
+        else if (action === "openCase") {
           const dir = await bridge.pick({ title: "Open a SPECTRA case directory", kind: "directory" });
           if (dir) await openCase(dir);
         }
@@ -80,18 +72,21 @@ export function App() {
   );
 
   const body = (() => {
-    if (route === "settings") return <SettingsScreen />;
+    if (route === "settings") return <SettingsScreen onSaved={recheck} />;
     if (route === "log") return <LogScreen />;
-    if (!caseDir) return <Welcome mode={welcomeMode} setMode={setWelcomeMode} onOpen={openCase} error={openError} />;
+    if (!env) return <Starting />;
+    if (!env.spectra.ok) return <EngineSetup env={env} onFixed={recheck} />;
+    if (!caseDir) return <Welcome env={env} onOpen={openCase} onFixed={recheck} error={openError} />;
     return <CaseScreen route={route} />;
   })();
 
   return caseDir ? (
-    <CaseProvider dir={caseDir} onClose={closeCase}>
-      <Shell route={route} navigate={navigate}>{body}</Shell>
+    // Keyed by folder: opening another case starts from nothing, not from this one's tasks.
+    <CaseProvider key={caseDir} dir={caseDir} onClose={closeCase}>
+      <Shell route={route}>{body}</Shell>
     </CaseProvider>
   ) : (
-    <Shell route={route} navigate={navigate}>{body}</Shell>
+    <Shell route={route}>{body}</Shell>
   );
 }
 
@@ -122,54 +117,133 @@ function CaseScreen(props: { route: string }) {
   }
 }
 
-function Shell(props: { route: string; navigate(r: string): void; children: ReactNode }) {
+function Shell(props: { route: string; children: ReactNode }) {
+  const main = useRef<HTMLElement>(null);
+  // Each step starts at its top, not wherever the previous one was scrolled to.
+  // Braces matter: scrollTo returns a promise in current Chromium, and an effect must not
+  // return anything but a cleanup function.
+  useEffect(() => {
+    main.current?.scrollTo(0, 0);
+  }, [props.route]);
   return (
     <div className="shell">
-      <TopBar navigate={props.navigate} />
+      <TopBar />
       <nav className="sidebar" aria-label="Examination steps">
-        <CaseNav route={props.route} navigate={props.navigate} />
+        <Sidebar route={props.route} />
         <div className="nav-foot">
-          <NavLink route="log" label="Command log" active={props.route === "log"} navigate={props.navigate} />
-          <NavLink route="settings" label="Settings" active={props.route === "settings"} navigate={props.navigate} />
+          <a className={`nav-item nav-plain ${props.route === "log" ? "active" : ""}`} href="#/log">Command log</a>
+          <a className={`nav-item nav-plain ${props.route === "settings" ? "active" : ""}`} href="#/settings">Settings</a>
         </div>
       </nav>
-      <main className="content">{props.children}</main>
+      <main className="content" ref={main}>{props.children}</main>
     </div>
   );
 }
 
-function NavLink(props: { route: string; label: string; step?: number; active: boolean; disabled?: boolean; navigate(r: string): void }) {
-  return (
-    <button
-      type="button"
-      className={`nav-item ${props.active ? "active" : ""}`}
-      onClick={() => props.navigate(props.route)}
-      disabled={props.disabled}
-      aria-current={props.active ? "page" : undefined}
-    >
-      {props.step !== undefined && <span className="nav-step">{props.step}</span>}
-      <span>{props.label}</span>
-    </button>
-  );
+function Sidebar(props: { route: string }) {
+  const c = useOptionalCase();
+  if (!c) {
+    return (
+      <div className="nav-steps">
+        <a className={`nav-item nav-plain ${props.route !== "settings" && props.route !== "log" ? "active" : ""}`} href="#/welcome">
+          Open or create a case
+        </a>
+        <p className="nav-hint">The examination steps appear here once a case is open.</p>
+      </div>
+    );
+  }
+  return <CaseSteps route={props.route} />;
 }
 
-function CaseNav(props: { route: string; navigate(r: string): void }) {
-  const open = useOptionalCaseDir();
+const TASK_PREFIX: Partial<Record<string, (ev: string | null) => string>> = {
+  evidence: () => "import",
+  identify: (ev) => `identify:${ev}`,
+  parse: (ev) => `parse:${ev}`,
+  recover: (ev) => `recover:${ev}`,
+  analytics: () => "motion:",
+  export: () => "export:",
+  report: () => "report",
+};
+
+function CaseSteps(props: { route: string }) {
+  const c = useCase();
+  const progress = c.info?.progress ?? null;
+  const next = nextStep(progress, c.marks, c.evidenceId);
+  const groups: StepGroup[] = ["case", "evidence", "findings"];
   return (
     <div className="nav-steps">
-      {!open && <NavLink route="welcome" label="Open or create a case" active={props.route !== "settings" && props.route !== "log"} navigate={props.navigate} />}
-      {STEPS.map((s) => (
-        <NavLink key={s.route} route={s.route} label={s.label} step={s.step} active={Boolean(open) && props.route === s.route} disabled={!open} navigate={props.navigate} />
+      {groups.map((group) => (
+        <div key={group} className="nav-group">
+          <div className="nav-group-head">
+            <span>{GROUP_TITLE[group]}</span>
+            {group === "evidence" && <EvidenceSelect />}
+          </div>
+          {STEPS.filter((s) => s.group === group).map((s) => (
+            <StepLink
+              key={s.id}
+              def={s}
+              status={stepStatus(s.id, progress, c.evidence, c.marks)}
+              active={props.route === s.id || (s.id === "overview" && !STEPS.some((x) => x.id === props.route) && props.route !== "log" && props.route !== "settings")}
+              next={next?.step === s.id && (group !== "evidence" || next.evidenceId === c.evidenceId)}
+              task={TASK_PREFIX[s.id]?.(c.evidenceId) ?? null}
+            />
+          ))}
+        </div>
       ))}
     </div>
   );
 }
 
-function useOptionalCaseDir(): string | null {
-  return useOptionalCase()?.dir ?? null;
+function EvidenceSelect() {
+  const c = useCase();
+  const items = c.info?.evidence ?? [];
+  if (!items.length) return <span className="nav-group-note">none yet</span>;
+  if (items.length === 1) return <span className="nav-group-note">{items[0].id}</span>;
+  return (
+    <select className="nav-evidence" value={c.evidenceId ?? ""} onChange={(e) => c.setEvidenceId(e.target.value)} aria-label="Evidence item for steps 4 to 7">
+      {items.map((e) => (
+        <option key={e.id} value={e.id}>
+          {e.id}{e.label ? ` · ${e.label}` : ""}
+        </option>
+      ))}
+    </select>
+  );
 }
 
-function TopBar(props: { navigate(r: string): void }) {
+const GLYPH: Record<StepStatus["state"], string> = {
+  done: "✓",
+  todo: "",
+  attention: "!",
+  skipped: "–",
+  na: "–",
+  locked: "",
+};
+
+function StepLink(props: { def: StepDef; status: StepStatus; active: boolean; next: boolean; task: string | null }) {
+  const { def, status } = props;
+  const running = useTaskBusy(props.task ?? "\0");
+  const state = running ? "running" : status.state;
+  return (
+    <a
+      className={`nav-item step-${state} ${status.warn ? "step-warn" : ""} ${props.active ? "active" : ""} ${props.next ? "is-next" : ""}`}
+      href={`#/${def.id}`}
+      aria-current={props.active ? "page" : undefined}
+    >
+      <span className="nav-step" aria-hidden>
+        {running ? <span className="spinner" /> : GLYPH[status.state] || def.n}
+      </span>
+      <span className="nav-text">
+        <span className="nav-title">
+          {def.title}
+          {props.next && !props.active && <span className="next-tag">next</span>}
+        </span>
+        <span className="nav-summary">{running ? "running…" : status.summary}</span>
+      </span>
+    </a>
+  );
+}
+
+function TopBar() {
   const current = useOptionalCase();
   const running = useCommandLog().filter((e) => e.result === null).length;
   return (
@@ -178,19 +252,20 @@ function TopBar(props: { navigate(r: string): void }) {
         <span className="brand-mark" aria-hidden>◈</span> SPECTRA
         <span className="brand-sub">offline · prototype</span>
       </div>
-      {current ? <CaseBar navigate={props.navigate} /> : <div className="topbar-case muted">No case open</div>}
+      {current ? <CaseBar /> : <div className="topbar-case muted">No case open</div>}
       <div className="topbar-right">
         {running > 0 && (
-          <button type="button" className="running" onClick={() => props.navigate("log")}>
+          <a className="running" href="#/log" title="Open the command log">
             <span className="spinner" /> {running} running
-          </button>
+          </a>
         )}
+        {current && <button type="button" className="btn btn-ghost" onClick={current.close}>Close case</button>}
       </div>
     </header>
   );
 }
 
-function CaseBar(props: { navigate(r: string): void }) {
+function CaseBar() {
   const c = useCase();
   const meta = c.info?.case;
   return (
@@ -199,28 +274,15 @@ function CaseBar(props: { navigate(r: string): void }) {
         <strong>{meta?.case_id ?? "…"}</strong>
         {meta?.title && <span className="muted"> · {meta.title}</span>}
       </div>
-      {c.info && c.info.evidence.length > 0 && (
-        <label className="evidence-select">
-          <span>Evidence</span>
-          <select value={c.evidenceId ?? ""} onChange={(e) => c.setEvidenceId(e.target.value)}>
-            {c.info.evidence.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.id} · class {e.provenance_class} · {e.label || e.kind}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-      <button type="button" className="audit-chip" onClick={() => props.navigate("overview")} title="Audit chain status — click for details">
+      <a className="audit-chip" href="#/overview" title="Audit chain status — open the case overview for details">
         {c.verify === null ? (
-          <Badge>audit …</Badge>
+          <Badge>audit chain · checking</Badge>
         ) : c.verify.ok ? (
-          <Badge tone="ok">audit chain verified · {c.verify.records_checked} records</Badge>
+          <Badge tone="ok">audit chain verified · {c.verify.records_checked} records{c.verifying ? " · rechecking" : ""}</Badge>
         ) : (
           <Badge tone="error">audit chain BROKEN{c.verify.broken_at_seq !== null ? ` at record ${c.verify.broken_at_seq}` : ""}</Badge>
         )}
-      </button>
-      <button type="button" className="btn btn-ghost" onClick={c.close}>Close case</button>
+      </a>
     </div>
   );
 }

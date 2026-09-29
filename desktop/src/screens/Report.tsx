@@ -1,22 +1,22 @@
 import { useState } from "react";
 
-import { bridge, run, useCli } from "../api";
-import { Badge, Button, CliHint, Empty, Field, Hash, KeyValues, Loading, Notice, Page, Panel, SeverityBadge, useAction } from "../components/ui";
+import { bridge, errorText, run, useCli } from "../api";
+import { StepPage } from "../components/StepNav";
+import { Badge, Button, CliHint, Empty, Field, Hash, KeyValues, Loading, Notice, Panel, SeverityBadge } from "../components/ui";
 import type { Certificate, Findings, ReportResult } from "../types";
-import { useCase } from "../state";
+import { useCase, useSessionState, useTask } from "../state";
 
 export function Report() {
   const c = useCase();
-  const findings = useCli<Findings>({ kind: "reportFindings", case: c.dir }, `${c.dir}|${c.version}`);
+  const findings = useCli<Findings>({ kind: "reportFindings", case: c.dir }, c.version);
   return (
-    <Page step={11} title="Report" lead="Twelve sections, generated from the case. Read §7 first: it says what the tool could not read.">
+    <StepPage step="report" lead="Twelve sections, generated from the case. Read §7 first: it says what the tool could not read, and you can add to it but never remove from it.">
       <Generate />
-      <CertificatePanel />
       <Panel
         title="§7 Negative findings"
-        actions={<span className="muted small">generated, not written — you can add to it, never remove from it (FR-81)</span>}
+        actions={<span className="muted small">generated, not written (FR-81)</span>}
       >
-        {findings.loading && !findings.data ? (
+        {findings.loading ? (
           <Loading what="Building findings" />
         ) : findings.error ? (
           <Notice tone="error">{findings.error}</Notice>
@@ -55,47 +55,67 @@ export function Report() {
           </>
         ) : null}
       </Panel>
-    </Page>
+      <CertificatePanel />
+    </StepPage>
   );
 }
 
 function Generate() {
   const c = useCase();
-  const [out, setOut] = useState("");
-  const [agency, setAgency] = useState(c.info?.case.agency ?? "");
-  const [letterhead, setLetterhead] = useState("");
-  const [footer, setFooter] = useState("");
-  const [pdf, setPdf] = useState(false);
-  const [result, setResult] = useState<ReportResult | null>(null);
-  const action = useAction(
-    () => run<ReportResult>({ kind: "reportGenerate", case: c.dir, out, agency, letterhead, footer, pdf }),
-    (r) => {
-      setResult(r);
-      c.changed();
-    },
-  );
+  const sep = c.dir.includes("\\") ? "\\" : "/";
+  const [form, setForm] = useSessionState("report:form", {
+    out: `${c.dir.replace(/[\\/]+$/, "")}${sep}reports`,
+    agency: c.info?.case.agency ?? "",
+    letterhead: "",
+    footer: "",
+    pdf: false,
+  });
+  const task = useTask<ReportResult>("report");
+  const [openError, setOpenError] = useState<string | null>(null);
+  const result = task.result;
+  const generated = c.info?.progress.reports_generated ?? 0;
+  const lastHtml = result?.html ?? (generated ? `${form.out}${sep}report-${c.info?.case.case_id}.html` : null);
+
+  const open = async (html: string) => {
+    setOpenError(null);
+    try {
+      await bridge.openReport(html);
+    } catch (err) {
+      setOpenError(`${errorText(err)}: ${html}`);
+    }
+  };
+
   return (
     <div className="grid-2">
-      <Panel title="Generate the report">
+      <Panel title={generated ? "Generate again" : "Generate the report"}>
         <div className="form-grid">
-          <Field label="Output folder" wide>
+          <Field label="Output folder" hint="Inside the case folder by default, beside everything it describes" wide>
             <div className="path-row">
-              <input value={out} readOnly placeholder="Choose a folder" />
-              <Button onClick={async () => setOut((await bridge.pick({ title: "Folder for the report", kind: "directory", create: true })) ?? out)}>Choose…</Button>
+              <input value={form.out} readOnly />
+              <Button onClick={async () => {
+                const out = await bridge.pick({ title: "Folder for the report", kind: "directory", create: true, defaultPath: form.out });
+                if (out) setForm({ ...form, out });
+              }}>Change…</Button>
             </div>
           </Field>
-          <Field label="Agency (letterhead)"><input value={agency} onChange={(e) => setAgency(e.target.value)} /></Field>
-          <Field label="Letterhead line"><input value={letterhead} onChange={(e) => setLetterhead(e.target.value)} /></Field>
-          <Field label="Footer note" wide><input value={footer} onChange={(e) => setFooter(e.target.value)} /></Field>
+          <Field label="Agency (letterhead)"><input value={form.agency} onChange={(e) => setForm({ ...form, agency: e.target.value })} /></Field>
+          <Field label="Letterhead line"><input value={form.letterhead} onChange={(e) => setForm({ ...form, letterhead: e.target.value })} /></Field>
+          <Field label="Footer note" wide><input value={form.footer} onChange={(e) => setForm({ ...form, footer: e.target.value })} /></Field>
           <label className="check">
-            <input type="checkbox" checked={pdf} onChange={(e) => setPdf(e.target.checked)} /> Also render PDF (needs WeasyPrint)
+            <input type="checkbox" checked={form.pdf} onChange={(e) => setForm({ ...form, pdf: e.target.checked })} /> Also render PDF (needs WeasyPrint)
           </label>
         </div>
-        {action.error && <Notice tone="error">{action.error}</Notice>}
+        {task.error && <Notice tone="error">{task.error}</Notice>}
         <div className="form-actions">
-          <Button kind="primary" onClick={action.run} busy={action.busy} disabled={!out}>Generate report</Button>
+          <Button
+            kind={generated ? "secondary" : "primary"}
+            onClick={() => task.run(() => run<ReportResult>({ kind: "reportGenerate", case: c.dir, ...form }))}
+            busy={task.busy}
+          >
+            {task.busy ? "Generating…" : generated ? "Generate again" : "Generate report"}
+          </Button>
         </div>
-        <CliHint>{`spectra report generate --out <folder>${pdf ? "" : " --no-pdf"}`}</CliHint>
+        <CliHint>{`spectra report generate --out "${form.out}"${form.pdf ? "" : " --no-pdf"}`}</CliHint>
       </Panel>
       <Panel title="Generated">
         {result ? (
@@ -111,15 +131,20 @@ function Generate() {
                 ["Negative findings", `${result.negative_summary.total} (${result.negative_summary.by_severity.serious ?? 0} serious)`],
               ]}
             />
-            <div className="form-actions">
-              <Button kind="primary" onClick={() => void bridge.openReport(result.html)}>Open report</Button>
-              <Button onClick={() => void bridge.showInFolder(result.html)}>Show in folder</Button>
-            </div>
-            <p className="muted small">The BSA s. 63(4) certificate is a separate document enclosed with the report — prepare it below.</p>
           </>
+        ) : generated ? (
+          <p className="muted">Generated {generated === 1 ? "once" : `${generated} times`}, last at {c.info?.progress.last_report_utc}.</p>
         ) : (
-          <Empty>Not generated in this session yet.</Empty>
+          <Empty>Not generated yet.</Empty>
         )}
+        {openError && <Notice tone="error">{openError}</Notice>}
+        {lastHtml && (
+          <div className="form-actions">
+            <Button kind="primary" onClick={() => void open(lastHtml)}>Open report</Button>
+            <Button onClick={() => void bridge.showInFolder(lastHtml)}>Show in folder</Button>
+          </div>
+        )}
+        <p className="muted small">The BSA s. 63(4) certificate is a separate document enclosed with the report — prepare it below.</p>
       </Panel>
     </div>
   );
@@ -127,15 +152,32 @@ function Generate() {
 
 function CertificatePanel() {
   const c = useCase();
-  const [cert, setCert] = useState<Certificate | null>(null);
-  const action = useAction(() => run<Certificate>({ kind: "reportCertificate", case: c.dir, evidence: c.evidenceId! }), setCert);
+  const ev = c.evidenceId;
+  const task = useTask<Certificate>(`certificate:${ev}`);
+  const cert = task.result;
   const body = cert?.certificate;
+  const items = c.info?.evidence ?? [];
   return (
     <Panel
-      title={`BSA s. 63(4) certificate${c.evidenceId ? ` · ${c.evidenceId}` : ""}`}
-      actions={<Button onClick={action.run} busy={action.busy} disabled={!c.evidenceId}>{cert ? "Refresh" : "Prepare certificate"}</Button>}
+      title="BSA s. 63(4) certificate"
+      actions={
+        <>
+          {items.length > 1 && (
+            <select value={ev ?? ""} onChange={(e) => c.setEvidenceId(e.target.value)} aria-label="Evidence item">
+              {items.map((e) => <option key={e.id} value={e.id}>{e.id}{e.label ? ` · ${e.label}` : ""}</option>)}
+            </select>
+          )}
+          <Button
+            onClick={() => task.run(() => run<Certificate>({ kind: "reportCertificate", case: c.dir, evidence: ev! }))}
+            busy={task.busy}
+            disabled={!ev}
+          >
+            {cert ? "Refresh" : `Prepare for ${ev ?? "…"}`}
+          </Button>
+        </>
+      }
     >
-      {action.error && <Notice tone="error">{action.error}</Notice>}
+      {task.error && <Notice tone="error">{task.error}</Notice>}
       {!body ? (
         <Empty>Pre-fills the Schedule to s. 63(4) with the record, the device and the hash values. Signatures are left blank: it is a sworn statement by two named people, required at each instance of submission.</Empty>
       ) : (
@@ -155,7 +197,7 @@ function CertificatePanel() {
           />
           {body.unsigned.map((u) => <Badge key={u} tone="warn">UNSIGNED: {u}</Badge>)}
           {cert!.warnings.map((w) => <Notice key={w} tone="warn">{w}</Notice>)}
-          <CliHint>{`spectra report certificate --evidence ${c.evidenceId} --out <folder>`}</CliHint>
+          <CliHint>{`spectra report certificate --evidence ${ev} --out <folder>`}</CliHint>
         </div>
       )}
     </Panel>

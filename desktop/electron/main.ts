@@ -50,6 +50,10 @@ app.enableSandbox();
 const appDir = app.getAppPath();
 const rendererDir = path.join(appDir, "dist", "renderer");
 const smoke = process.argv.includes("--smoke");
+const smokeOut = process.env.SPECTRA_UI_SMOKE_OUT ?? path.join(appDir, "smoke-out");
+// A smoke run gets its own settings, so it neither depends on nor edits the examiner's
+// (their Python choice, their recent cases).
+if (smoke) app.setPath("userData", path.join(smokeOut, "user-data"));
 
 let settings: SettingsStore;
 let runner: CliRunner;
@@ -172,6 +176,7 @@ function registerIpc(): void {
     if (options.create) properties.push("createDirectory", "promptToCreate");
     const result = await dialog.showOpenDialog(win!, {
       title: options.title,
+      defaultPath: options.defaultPath || undefined,
       properties,
       filters: options.extensions?.length
         ? [{ name: "Files", extensions: options.extensions }, { name: "All files", extensions: ["*"] }]
@@ -192,7 +197,13 @@ function registerIpc(): void {
 }
 
 void app.whenReady().then(async () => {
-  settings = new SettingsStore(path.join(app.getPath("userData"), "settings.json"), appDir);
+  settings = new SettingsStore(
+    path.join(app.getPath("userData"), "settings.json"),
+    appDir,
+    // Not Documents: on Windows that is often redirected into OneDrive, and a case folder
+    // there would be uploaded (rule 6: nothing leaves the machine).
+    app.getPath("home"),
+  );
   runner = new CliRunner(
     () => settings.get(),
     (job) => win?.webContents.send("spectra:jobStarted", job),
@@ -207,7 +218,7 @@ void app.whenReady().then(async () => {
     // A hidden window cannot be captured on every platform; show it without taking focus.
     win.showInactive();
     try {
-      await runSmoke(win, process.env.SPECTRA_UI_SMOKE_OUT ?? path.join(appDir, "smoke-out"));
+      await runSmoke(win, smokeOut);
     } catch (err) {
       console.error("smoke run failed:", err);
       process.exitCode = 1;

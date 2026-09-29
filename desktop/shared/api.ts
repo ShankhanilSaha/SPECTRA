@@ -118,12 +118,19 @@ export interface Settings {
   ffmpeg: string;
   /** Recorded as the operator on every audit record. */
   operator: string;
+  /** Folder new case directories are created in. */
+  caseParent: string;
+  /** Recently opened cases that still exist, newest first. */
   recentCases: string[];
 }
 
 export interface EnvironmentCheck {
   spectra: { ok: boolean; version: string | null; error: string | null };
   ffmpeg: { ok: boolean; path: string | null };
+  /** A fix found on this machine, for the examiner to accept with one click; never applied
+   * silently. `python`: an interpreter that can run spectra, when the configured one
+   * cannot. `ffmpeg`: an FFmpeg binary, when none is configured or on PATH. */
+  suggestion: { python: string | null; version: string | null; ffmpeg: string | null } | null;
 }
 
 export interface PickOptions {
@@ -133,6 +140,8 @@ export interface PickOptions {
   extensions?: string[];
   /** Offer to create the directory (for a new case or report output). */
   create?: boolean;
+  /** Where the dialog opens. */
+  defaultPath?: string;
 }
 
 export interface SpectraBridge {

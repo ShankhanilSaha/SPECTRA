@@ -102,14 +102,30 @@ def test_every_step_the_desktop_ui_drives_has_json_output(tmp_path, cli):
     assert {a["kind"] for a in artifacts} == {"es", "frame_index"}
     assert all(Path(a["path"]).is_file() for a in artifacts)
 
+    progress = json.loads(cli("case", "info", *as_case))["progress"]
+    step = progress["evidence"][0]
+    assert [d["kind"] for d in progress["attachments"]] == ["panchnama"]
+    assert progress["exported_recordings"] == 1
+    assert step["custody_entries"] == 1 and step["parsed"] and not step["recovered"]
+    assert step["identification"]["support"] == "parse"
+    assert step["recordings"]["by_tier"]["T1"] == 1
+    assert step["time_observations"] == 0 and step["recordings"]["with_reference_time"] == 0
+
     timed = json.loads(cli("time", "set", "--method", "B", "--device-time",
                            "2026-03-05T14:22:00", "--true-time", "2026-03-05T14:04:18Z",
                            *as_case))
     assert timed["recordings_normalised"] == 1
+    recovered = json.loads(cli("recover", "--tiers", "T3", *as_case))
 
     report = json.loads(cli("report", "generate", "--out", str(tmp_path / "report"),
                             "--no-pdf", *as_case))
     assert Path(report["html"]).is_file() and report["pdf"] is None and report["audit_ok"]
+
+    progress = json.loads(cli("case", "info", *as_case))["progress"]
+    step = progress["evidence"][0]
+    assert step["time_observations"] == 1 and step["recordings"]["with_reference_time"] == 1
+    assert step["recovered"] and step["last_recover"]["tiers_run"] == recovered["tiers_run"]
+    assert progress["reports_generated"] == 1 and progress["last_report_utc"]
 
 
 def _dav_usb(tmp_path, name="usb", frames=8):
@@ -137,6 +153,7 @@ def test_case_is_resolved_from_spectra_case_env(tmp_path, cli, monkeypatch):
     out = cli("case", "info")
     assert "case C-ENV" in out and "agency: Cyber Cell" in out and "audit head: seq 3" in out
     assert "EV-001  export_files  class D" in out
+    assert "identify: not identified · parsed: no" in out
 
 
 def test_case_verify_prints_warnings(tmp_path, cli):

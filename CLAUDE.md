@@ -1225,7 +1225,8 @@ Implemented so far: `case new|open|info|verify|custody|attach|chain`,
 `list recordings|artifacts`,
 `export clip`, `time set|show`, `timeline`, `gaps`, `analyze motion`,
 `report generate|findings|certificate`, `verify chain`. Everything else below is planned.
-`import image` requires `--provenance A|B|C|D` (§17 item 14). `analyze motion` requires
+`import image` requires `--provenance A|B|C|D` (§17 item 14). `case info --json` includes
+per-step `progress` (§17 item 27). `analyze motion` requires
 FFmpeg and refuses without it (§17 item 18). Every command the desktop app drives takes
 `--json`; `identify show` and `list artifacts` are read-only and write no audit record.
 
@@ -1409,6 +1410,18 @@ diverge from the docs.
     cancelled, and `host-resolver-rules` so no hostname resolves. No dev server: the renderer
     is built and loaded from disk, so nothing listens on a socket. `ui/` in §12 is now
     `desktop/` (P5). Packaging the Electron app with a bundled Python is still open (NFR-15).
+
+27. **`case info --json` carries `progress`** (`services/progress.py`, 2026-09-29): per
+    evidence item, identification support, whether it was parsed and recovered (with the
+    last recover summary from its audit record), offset observations, and recordings by
+    tier; for the case, attached documents, exports, analysed recordings and reports
+    generated. Read-only and not audited. The desktop step list and its "next step" come
+    from it, so a step's status is what the case records, not what one window remembers.
+    It is a new JSON contract with P5; doc 3 §2 / doc 7 §5 do not describe it yet. The
+    desktop now runs identification straight after import (doc 7 §4 step 4 says it runs
+    automatically) and lets the examiner move past a step it is legitimate to leave undone
+    (no scene documents yet, no clock offset) only by saying so — the skip is remembered
+    per case in the window, never written to the case.
 
 **Diagram ideas NOT adopted — research spikes only, never committed scope:**
 

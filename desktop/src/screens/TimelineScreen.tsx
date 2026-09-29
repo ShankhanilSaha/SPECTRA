@@ -1,11 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 
 import { useCli } from "../api";
 import { Timeline, type TLLane, type TLSyncGap } from "../components/Timeline";
-import { Badge, Button, Empty, KeyValues, Loading, Notice, Page, Panel, TierBadge } from "../components/ui";
+import { StepPage } from "../components/StepNav";
+import { Badge, Button, Empty, KeyValues, Loading, Notice, Panel, TierBadge } from "../components/ui";
 import { channelLabel, deviceTime, duration, notesOf, toMs, utcTime } from "../format";
 import type { GapReport, Recording, TimelineData } from "../types";
-import { useCase } from "../state";
+import { go, useCase, useSessionState } from "../state";
 
 type Axis = "reference" | "device";
 
@@ -15,48 +16,63 @@ function laneKey(evidence: string, channel: number | null): string {
 
 export function TimelineScreen() {
   const c = useCase();
-  const key = `${c.dir}|${c.version}`;
-  const timeline = useCli<TimelineData>({ kind: "timeline", case: c.dir }, key);
-  const gaps = useCli<GapReport>({ kind: "gaps", case: c.dir, minGap: 1 }, key);
-  const recordings = useCli<Recording[]>({ kind: "listRecordings", case: c.dir, evidence: null }, key);
+  const timeline = useCli<TimelineData>({ kind: "timeline", case: c.dir }, c.version);
+  const gaps = useCli<GapReport>({ kind: "gaps", case: c.dir, minGap: 1 }, c.version);
+  const recordings = useCli<Recording[]>({ kind: "listRecordings", case: c.dir, evidence: null }, c.version);
   const hasReference = Boolean(timeline.data?.lanes.length);
-  const [axisChoice, setAxis] = useState<Axis | null>(null);
+  const [axisChoice, setAxis] = useSessionState<Axis | null>("timeline:axis", null);
   const axis: Axis = axisChoice ?? (hasReference ? "reference" : "device");
-  const [selected, setSelected] = useState<string | null>(null);
+  const [deviceChoice, setDevice] = useSessionState<string | null>("timeline:device", null);
+  const items = c.info?.evidence ?? [];
+  const device = deviceChoice && items.some((e) => e.id === deviceChoice) ? deviceChoice : c.evidenceId;
+  const [selected, setSelected] = useSessionState<string | null>("timeline:selected", null);
+
+  // Looking at the timeline is the step: opening it is what completes it.
+  useEffect(() => {
+    if (!c.marks.visited.includes("timeline")) c.mark("visited", "timeline");
+  }, []);
 
   const byId = useMemo(() => new Map((recordings.data ?? []).map((r) => [r.id, r])), [recordings.data]);
 
   const built = useMemo(() => {
     if (!timeline.data || !gaps.data || !recordings.data) return null;
     if (axis === "reference") return referenceLanes(timeline.data, gaps.data, byId);
-    return deviceLanes(c.evidenceId, recordings.data, gaps.data);
-  }, [axis, timeline.data, gaps.data, recordings.data, byId, c.evidenceId]);
+    return deviceLanes(device, recordings.data, gaps.data);
+  }, [axis, timeline.data, gaps.data, recordings.data, byId, device]);
 
   const loading = timeline.loading || gaps.loading || recordings.loading;
   const error = timeline.error || gaps.error || recordings.error;
   const picked = selected ? byId.get(selected) : undefined;
 
   return (
-    <Page step={8} title="Timeline" lead="Look at the gaps first. A gap on every channel at once usually means a power event or a deliberate interruption — often the most important finding in the case.">
+    <StepPage step="timeline" lead="Look at the gaps first. A gap on every channel at once usually means a power event or a deliberate interruption — often the most important finding in the case.">
       <Panel
         title="Channels on one axis"
         actions={
-          <div className="segmented" role="radiogroup" aria-label="Time axis">
-            <button type="button" className={axis === "reference" ? "active" : ""} onClick={() => setAxis("reference")} disabled={!hasReference}>
-              Reference (UTC) · all devices
-            </button>
-            <button type="button" className={axis === "device" ? "active" : ""} onClick={() => setAxis("device")} disabled={!c.evidenceId}>
-              Device clock · {c.evidenceId ?? "—"}
-            </button>
+          <div className="axis-choice">
+            <div className="segmented" role="radiogroup" aria-label="Time axis">
+              <button type="button" className={axis === "reference" ? "active" : ""} onClick={() => setAxis("reference")} disabled={!hasReference}
+                title={hasReference ? undefined : "No evidence has a clock offset yet (step 6)"}>
+                Reference (UTC) · all devices
+              </button>
+              <button type="button" className={axis === "device" ? "active" : ""} onClick={() => setAxis("device")} disabled={!items.length}>
+                Device clock
+              </button>
+            </div>
+            {axis === "device" && items.length > 1 && (
+              <select value={device ?? ""} onChange={(e) => setDevice(e.target.value)} aria-label="Whose clock">
+                {items.map((e) => <option key={e.id} value={e.id}>{e.id}{e.label ? ` · ${e.label}` : ""}</option>)}
+              </select>
+            )}
           </div>
         }
       >
         {axis === "device" && (
-          <Notice tone="warn" title="Absolute time not established on this axis">
-            This is the recorder's own wall clock for {c.evidenceId}. Only relative order and gaps within this one device are meaningful here; it cannot be compared with another device.
+          <Notice tone="warn" title={`${device}'s own clock · absolute time not established on this axis`}>
+            Only relative order and gaps within this one device are meaningful here; it cannot be compared with another device.
+            {!hasReference && <> To put devices on one UTC axis, measure their clock offset in the <a href="#/time">Time model</a> (step 6).</>}
           </Notice>
         )}
-        {!hasReference && axis === "reference" && <Notice>No evidence has a clock offset yet — set one in the Time model (step 6).</Notice>}
         {error && <Notice tone="error">{error}</Notice>}
         {loading && !built ? (
           <Loading />
@@ -87,7 +103,7 @@ export function TimelineScreen() {
           )}
         </Panel>
       </div>
-    </Page>
+    </StepPage>
   );
 }
 
@@ -180,8 +196,8 @@ function RecordingDetail(props: { r: Recording }) {
       />
       {notes.length > 0 && <ul className="small notes">{notes.map((n) => <li key={n}>{n}</li>)}</ul>}
       <div className="form-actions">
-        <Button kind="primary" onClick={() => (window.location.hash = `#/export?rec=${r.id}`)}>Export & play →</Button>
-        <Button onClick={() => (window.location.hash = `#/analytics?rec=${r.id}`)}>Motion analysis →</Button>
+        <Button kind="primary" onClick={() => go(`export?rec=${r.id}`)}>Play & export →</Button>
+        <Button onClick={() => go(`analytics?rec=${r.id}`)}>Motion analysis →</Button>
       </div>
     </>
   );

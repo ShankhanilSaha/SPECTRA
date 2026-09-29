@@ -1,6 +1,10 @@
 /**
  * Renderer side of the bridge: run a CLI request, record it in the command log, and turn a
  * failed run into an error carrying the CLI's own message.
+ *
+ * Reads are cached by request: a screen opened a second time shows what it showed last
+ * time at once and refreshes underneath, instead of blanking to "Loading…" while a Python
+ * process starts. The cache is only ever a copy of CLI output; the case is the source.
  */
 
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -88,39 +92,93 @@ export async function runForResult<T>(request: CliRequest): Promise<{ ok: boolea
   }
 }
 
+// -- read cache -----------------------------------------------------------------------------
+
+interface CacheEntry {
+  data: unknown;
+  error: string | null;
+  /** The case version the entry was read at. */
+  version: string;
+}
+
+const cache = new Map<string, CacheEntry>();
+const inflight = new Map<string, Promise<CacheEntry>>();
+
+/** Forget every cached read (on closing a case). */
+export function clearCache(): void {
+  cache.clear();
+  inflight.clear();
+}
+
+/** One CLI run per distinct request and version, however many views ask at once. */
+function fetchShared(request: CliRequest, version: string): Promise<CacheEntry> {
+  const id = JSON.stringify(request);
+  const flight = `${id}#${version}`;
+  let pending = inflight.get(flight);
+  if (!pending) {
+    pending = run<unknown>(request).then(
+      (data): CacheEntry => ({ data, error: null, version }),
+      (err: unknown): CacheEntry => ({ data: null, error: errorText(err), version }),
+    );
+    pending.then((entry) => {
+      cache.set(id, entry);
+      inflight.delete(flight);
+    });
+    inflight.set(flight, pending);
+  }
+  return pending;
+}
+
 // -- data hook ------------------------------------------------------------------------------
 
 export interface Loaded<T> {
   data: T | null;
   error: string | null;
+  /** Nothing to show yet. */
   loading: boolean;
+  /** Showing the last result while a newer one is read. */
+  refreshing: boolean;
 }
 
 /**
- * Load `request` whenever `key` changes. A null request loads nothing. `key` should include
- * everything the request depends on plus the case version, so state changes refresh views.
+ * Load `request`, and again whenever `version` changes (pass the case version so a state
+ * change refreshes every view). A null request loads nothing. A result already read at
+ * this version is shown without running anything; an older one is shown until the new
+ * one arrives.
  */
-export function useCli<T>(request: CliRequest | null, key: string): Loaded<T> {
-  const [state, setState] = useState<Loaded<T>>({ data: null, error: null, loading: request !== null });
+export function useCli<T>(request: CliRequest | null, version: string | number): Loaded<T> {
+  const id = request === null ? null : JSON.stringify(request);
+  const at = String(version);
+  const initial = (): Loaded<T> => {
+    const hit = id ? cache.get(id) : undefined;
+    return hit
+      ? { data: hit.data as T | null, error: hit.error, loading: false, refreshing: hit.version !== at }
+      : { data: null, error: null, loading: id !== null, refreshing: false };
+  };
+  const [state, setState] = useState<Loaded<T>>(initial);
   useEffect(() => {
     if (request === null) {
-      setState({ data: null, error: null, loading: false });
+      setState({ data: null, error: null, loading: false, refreshing: false });
       return;
     }
+    const now = initial();
+    setState(now);
+    if (!now.loading && !now.refreshing) return;
     let live = true;
-    setState((s) => ({ ...s, loading: true, error: null }));
-    run<T>(request).then(
-      (data) => live && setState({ data, error: null, loading: false }),
-      (err: unknown) => live && setState({ data: null, error: errorText(err), loading: false }),
-    );
+    fetchShared(request, at).then((entry) => {
+      if (live) setState({ data: entry.data as T | null, error: entry.error, loading: false, refreshing: false });
+    });
     return () => {
       live = false;
     };
-    // The request object is rebuilt each render; `key` is what identifies it.
-  }, [key]);
+    // The request object is rebuilt each render; its JSON is what identifies it.
+  }, [id, at]);
   return state;
 }
 
 export function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  return (err instanceof Error ? err.message : String(err)).replace(
+    /^Error invoking remote method '[^']+': (Error: )?/,
+    "",
+  );
 }

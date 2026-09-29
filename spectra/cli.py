@@ -29,6 +29,7 @@ from spectra.services import evidence as evidence_service
 from spectra.services import export as export_service
 from spectra.services import identify as identify_service
 from spectra.services import parse as parse_service
+from spectra.services import progress as progress_service
 from spectra.services import recover as recover_service
 from spectra.services import report as report_service
 from spectra.services import timeline as timeline_service
@@ -151,7 +152,7 @@ def case_open(directory: Path) -> None:
 
 @case_app.command("info")
 def case_info(case: CaseOpt = None, as_json: JsonOpt = False) -> None:
-    """Show case metadata, evidence items and the audit head."""
+    """Show case metadata, evidence items, how far each has got, and the audit head."""
     with _open(case) as store:
         meta = store.meta()
         items = [
@@ -160,8 +161,10 @@ def case_info(case: CaseOpt = None, as_json: JsonOpt = False) -> None:
             for row in (evidence_service.evidence_row(store, r[0]) for r in
                         store.conn.execute("SELECT id FROM evidence ORDER BY id"))
         ]
+        progress = progress_service.case_progress(store)
         head_seq, head = store.audit.head()
-    data = {"case": meta, "evidence": items, "audit_head": {"seq": head_seq, "digest": head}}
+    data = {"case": meta, "evidence": items, "progress": progress,
+            "audit_head": {"seq": head_seq, "digest": head}}
     if as_json:
         _emit_json(data)
         return
@@ -169,10 +172,26 @@ def case_info(case: CaseOpt = None, as_json: JsonOpt = False) -> None:
     for key in ("agency", "fir_ref", "examiner_name", "examiner_designation", "created_utc"):
         if meta.get(key):
             typer.echo(f"  {key}: {meta[key]}")
+    steps = {p["evidence_id"]: p for p in progress["evidence"]}
     for item in items:
         typer.echo(f"  {item['id']}  {item['kind']}  class {item['provenance_class']}  "
                    f"{item['capacity_bytes']} bytes  sha256 {item['sha256']}")
+        typer.echo(f"    {_progress_line(steps[item['id']])}")
     typer.echo(f"  audit head: seq {head_seq} {head}")
+
+
+def _progress_line(p: dict[str, Any]) -> str:
+    ident = p["identification"]
+    if ident is None:
+        identified = "not identified"
+    else:
+        identified = f"{ident['family'] or ident['status']} ({ident['support']})"
+    recordings = p["recordings"]
+    tiers = ", ".join(f"{t} {n}" for t, n in recordings["by_tier"].items() if n)
+    return (f"identify: {identified} · parsed: {'yes' if p['parsed'] else 'no'} · "
+            f"offset observations: {p['time_observations']} · "
+            f"recovered: {'yes' if p['recovered'] else 'no'} · "
+            f"recordings: {recordings['total']}{f' ({tiers})' if tiers else ''}")
 
 
 @case_app.command("verify")

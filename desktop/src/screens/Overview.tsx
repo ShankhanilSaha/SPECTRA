@@ -1,13 +1,45 @@
 import { bytes } from "../format";
-import { Badge, Button, CliHint, Empty, Hash, KeyValues, Loading, Notice, Page, Panel } from "../components/ui";
-import { useCase } from "../state";
+import { Badge, Button, CliHint, Hash, KeyValues, Loading, Notice, Panel } from "../components/ui";
+import { StepPage } from "../components/StepNav";
+import { go, useCase } from "../state";
+import { nextStep, stepDef, stepStatus, type StepId } from "../steps";
+import type { EvidenceProgress } from "../types";
 
 export function Overview() {
   const c = useCase();
   const meta = c.info?.case;
   return (
-    <Page step={1} title="Case" lead={c.dir}>
-      {c.infoError && <Notice tone="error">{c.infoError}</Notice>}
+    <StepPage step="overview" lead={<span className="path">{c.dir}</span>}>
+      <NextCard />
+      <Panel title="Evidence items">
+        {!c.info ? (
+          <Loading />
+        ) : c.info.evidence.length === 0 ? (
+          <p className="muted">No evidence yet.</p>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr><th>ID</th><th>Label</th><th>Provenance</th><th className="num">Size</th><th>Identify</th><th>Parse</th><th>Time</th><th>Recover</th></tr>
+            </thead>
+            <tbody>
+              {c.info.evidence.map((e) => {
+                const p = c.info!.progress.evidence.find((x) => x.evidence_id === e.id) ?? null;
+                return (
+                  <tr key={e.id} className={`clickable ${e.id === c.evidenceId ? "row-selected" : ""}`} onClick={() => c.setEvidenceId(e.id)}>
+                    <td><strong>{e.id}</strong><div className="muted small">{e.kind}</div></td>
+                    <td>{e.label || <span className="muted">—</span>}</td>
+                    <td><Badge tone="accent">class {e.provenance_class}</Badge></td>
+                    <td className="num">{bytes(e.capacity_bytes)}</td>
+                    {(["identify", "parse", "time", "recover"] as StepId[]).map((s) => (
+                      <td key={s}><MiniStatus step={s} ev={p} evidenceId={e.id} /></td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </Panel>
       <div className="grid-2">
         <Panel title="Case record">
           {meta ? (
@@ -28,34 +60,69 @@ export function Overview() {
         </Panel>
         <AuditPanel />
       </div>
-      <Panel title="Evidence items">
-        {!c.info ? (
-          <Loading />
-        ) : c.info.evidence.length === 0 ? (
-          <Empty>
-            No evidence yet. <a href="#/evidence">Add evidence</a> — and attach the scene documents first (<a href="#/documents">step 2</a>).
-          </Empty>
-        ) : (
-          <table className="table">
-            <thead>
-              <tr><th>ID</th><th>Kind</th><th>Provenance</th><th>Label</th><th>Size</th><th>SHA-256</th></tr>
-            </thead>
-            <tbody>
-              {c.info.evidence.map((e) => (
-                <tr key={e.id} className={e.id === c.evidenceId ? "row-selected" : ""} onClick={() => c.setEvidenceId(e.id)}>
-                  <td><strong>{e.id}</strong></td>
-                  <td>{e.kind}</td>
-                  <td><Badge tone="accent">class {e.provenance_class}</Badge></td>
-                  <td>{e.label || <span className="muted">—</span>}</td>
-                  <td className="num">{bytes(e.capacity_bytes)}</td>
-                  <td><Hash value={e.sha256} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Panel>
-    </Page>
+    </StepPage>
+  );
+}
+
+/** Where the examination stands, and the one thing to do next. */
+function NextCard() {
+  const c = useCase();
+  if (!c.info) return null;
+  const next = nextStep(c.info.progress, c.marks, c.evidenceId);
+  if (!next) {
+    return (
+      <div className="next-card done">
+        <div>
+          <div className="eyebrow">Every step has been run</div>
+          <h2>Read the report's §7 negative findings before you sign.</h2>
+        </div>
+        <Button kind="primary" onClick={() => go("report")}>Open the report step →</Button>
+      </div>
+    );
+  }
+  const def = stepDef(next.step);
+  const ev = c.info.progress.evidence.find((e) => e.evidence_id === next.evidenceId) ?? null;
+  const status = stepStatus(next.step, c.info.progress, ev, c.marks);
+  return (
+    <div className="next-card">
+      <div>
+        <div className="eyebrow">
+          Next · step {def.n}
+          {next.evidenceId ? ` · ${next.evidenceId}` : ""}
+        </div>
+        <h2>{def.title}</h2>
+        <p>{def.purpose} <span className="muted">({status.summary})</span></p>
+      </div>
+      <Button
+        kind="primary"
+        onClick={() => {
+          if (next.evidenceId) c.setEvidenceId(next.evidenceId);
+          go(next.step);
+        }}
+      >
+        Go to {def.title} →
+      </Button>
+    </div>
+  );
+}
+
+function MiniStatus(props: { step: StepId; ev: EvidenceProgress | null; evidenceId: string }) {
+  const c = useCase();
+  const s = stepStatus(props.step, c.info?.progress ?? null, props.ev, c.marks);
+  const tone = s.warn || s.state === "attention" ? "warn" : s.state === "done" ? "ok" : "neutral";
+  return (
+    <button
+      type="button"
+      className="mini-status"
+      onClick={(e) => {
+        e.stopPropagation();
+        c.setEvidenceId(props.evidenceId);
+        go(props.step);
+      }}
+      title={`Open ${stepDef(props.step).title} for ${props.evidenceId}`}
+    >
+      <Badge tone={tone}>{s.summary}</Badge>
+    </button>
   );
 }
 
@@ -63,7 +130,7 @@ function AuditPanel() {
   const c = useCase();
   const v = c.verify;
   return (
-    <Panel title="Audit chain" actions={<Button onClick={c.changed}>Verify now</Button>}>
+    <Panel title="Audit chain" actions={<Button onClick={c.changed} busy={c.verifying}>Verify now</Button>}>
       {!v ? (
         <Loading what="Verifying" />
       ) : (
@@ -82,7 +149,6 @@ function AuditPanel() {
           <KeyValues
             rows={[
               ["Records checked", String(v.records_checked)],
-              ["Head record", String(v.head_seq)],
               ["Head digest", <Hash value={v.head_digest} />],
               ["Artefacts checked", String(v.artifacts_checked)],
             ]}

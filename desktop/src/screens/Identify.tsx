@@ -2,69 +2,86 @@ import { useState } from "react";
 
 import { run, useCli } from "../api";
 import { HexBytes } from "../components/HexBytes";
-import { Badge, Button, CliHint, Empty, Field, Loading, Notice, Page, Panel, useAction } from "../components/ui";
-import { hex } from "../format";
-import type { Candidate, IdentificationView, Support } from "../types";
-import { useCase } from "../state";
+import { StepPage } from "../components/StepNav";
+import { Badge, Button, CliHint, Field, Hash, Loading, Notice, Panel, useAction } from "../components/ui";
+import { bytes, hex } from "../format";
+import type { Candidate, IdentificationView, Ingest, Support } from "../types";
+import { useCase, useTask } from "../state";
 
 const SUPPORT: Record<Support, { label: string; tone: "ok" | "warn" | "error" | "neutral"; text: string }> = {
-  parse: { label: "full parse", tone: "ok", text: "The layout is understood: parse the index next." },
+  parse: { label: "full parse", tone: "ok", text: "The layout is understood. Next, parse the recorder's index." },
   carve_only: {
     label: "carve-only",
     tone: "warn",
-    text: "The family is known but this layout is not verified, so it is not parsed. Signature carving (Recover, T3) still works — that is where the footage comes from.",
+    text: "The family is known but this layout is not verified, so it is not parsed: a mis-parse would produce a confident wrong timeline. Parsing is skipped; signature carving in Recover (step 7) is where the footage comes from.",
   },
   pending_selection: {
     label: "choose a candidate",
     tone: "warn",
-    text: "More than one family matched. Nothing was selected for you: review the matched bytes and choose deliberately. Your choice and reason are audited.",
+    text: "More than one family matched. Nothing was selected for you: review the matched bytes below and choose deliberately. Your choice and your reason are audited.",
   },
   none: {
     label: "unknown",
     tone: "neutral",
-    text: "No format family matched. That is a finding, not a failure: carving is still available, and nothing is guessed.",
+    text: "No format family matched. That is a finding, not a failure, and nothing is guessed. There is no plugin to parse or carve it with, so steps 5 and 7 do not apply to this item.",
   },
 };
 
 export function Identify() {
   const c = useCase();
-  const shown = useCli<IdentificationView>(
-    c.evidenceId ? { kind: "identifyShow", case: c.dir, evidence: c.evidenceId } : null,
-    `${c.dir}|${c.evidenceId}|${c.version}`,
-  );
-  const identify = useAction(() => run({ kind: "identify", case: c.dir, evidence: c.evidenceId! }), c.changed);
-  const notYet = shown.error?.includes("has not been identified");
+  const ev = c.evidenceId;
+  const task = useTask(`identify:${ev}`);
+  const shown = useCli<IdentificationView>(ev ? { kind: "identifyShow", case: c.dir, evidence: ev } : null, c.version);
+  const notYet = Boolean(shown.error?.includes("has not been identified"));
+  const ingest = ev ? (c.session.get(`ingest:${ev}`) as Ingest | undefined) : undefined;
+  const identify = () => task.run(() => run({ kind: "identify", case: c.dir, evidence: ev! }));
 
   return (
-    <Page
-      step={4}
-      title="Identify"
-      lead="The parser is chosen from the bytes on the disk, never the badge on the chassis. Rebrands are most of the market."
-    >
-      {!c.evidenceId ? (
-        <Empty>Add evidence first.</Empty>
-      ) : (
-        <>
-          <Panel
-            title={`Identification · ${c.evidenceId}`}
-            actions={<Button kind={shown.data ? "secondary" : "primary"} onClick={identify.run} busy={identify.busy}>{shown.data ? "Re-run identification" : "Identify"}</Button>}
-          >
-            {identify.error && <Notice tone="error">{identify.error}</Notice>}
-            {shown.loading && !shown.data ? (
-              <Loading />
-            ) : notYet ? (
-              <Empty>Not identified yet. Identification probes every registered format plugin at fixed offsets and reports every match with the bytes it matched.</Empty>
-            ) : shown.error ? (
-              <Notice tone="error">{shown.error}</Notice>
-            ) : shown.data ? (
-              <Result view={shown.data} />
-            ) : null}
-            <CliHint>{`spectra identify --evidence ${c.evidenceId}`}</CliHint>
-          </Panel>
-          {shown.data?.support === "pending_selection" && <SelectCandidate view={shown.data} />}
-        </>
+    <StepPage step="identify" lead="The parser is chosen from the bytes on the disk, never the badge on the chassis: rebrands are most of the market.">
+      {ingest && <IngestNotice r={ingest} />}
+      <Panel
+        title="Identification"
+        actions={
+          shown.data && (
+            <Button onClick={identify} busy={task.busy}>Run again</Button>
+          )
+        }
+      >
+        {task.error && <Notice tone="error">{task.error}</Notice>}
+        {task.busy && !shown.data ? (
+          <Loading what="Probing every format plugin at its fixed offsets" />
+        ) : shown.loading && !shown.data ? (
+          <Loading />
+        ) : notYet ? (
+          <div className="cta">
+            <p>Identification probes every registered format plugin at fixed offsets and reports every match with the exact bytes it matched.</p>
+            <Button kind="primary" onClick={identify} busy={task.busy}>Identify {ev}</Button>
+          </div>
+        ) : shown.error ? (
+          <Notice tone="error">{shown.error}</Notice>
+        ) : shown.data ? (
+          <Result view={shown.data} />
+        ) : null}
+        {ev && <CliHint>{`spectra identify --evidence ${ev}`}</CliHint>}
+      </Panel>
+      {shown.data?.support === "pending_selection" && <SelectCandidate view={shown.data} />}
+    </StepPage>
+  );
+}
+
+function IngestNotice(props: { r: Ingest }) {
+  const { r } = props;
+  return (
+    <Notice tone={r.embedded_hash_check.status === "MISMATCH" ? "error" : "ok"} title={`${r.evidence_id} imported and hashed · ${bytes(r.size)}`}>
+      <div className="hash-pair">
+        <Hash label="MD5" value={r.md5} />
+        <Hash label="SHA-256" value={r.sha256} />
+      </div>
+      {r.gaps.length > 0 && <p>{r.gaps.length} unreadable range(s) were zero-filled and recorded as gaps.</p>}
+      {r.embedded_hash_check.status === "MISMATCH" && (
+        <p><strong>The MD5 stored in the E01 does not match its media</strong> — the image is corrupt or altered. This is recorded on the evidence item.</p>
       )}
-    </Page>
+    </Notice>
   );
 }
 
