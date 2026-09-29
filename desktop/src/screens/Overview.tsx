@@ -109,7 +109,10 @@ function NextCard() {
 function MiniStatus(props: { step: StepId; ev: EvidenceProgress | null; evidenceId: string }) {
   const c = useCase();
   const s = stepStatus(props.step, c.info?.progress ?? null, props.ev, c.marks);
-  const tone = s.warn || s.state === "attention" ? "warn" : s.state === "done" ? "ok" : "neutral";
+  // "Done" is not "good". A step can complete and find nothing, and on this evidence that
+  // absence may be the most important thing in the case — so a completed step reads neutral
+  // and the tick in the rail carries completion. Colour is reserved for what needs attention.
+  const tone = s.warn || s.state === "attention" ? "warn" : "neutral";
   return (
     <button
       type="button"
