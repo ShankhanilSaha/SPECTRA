@@ -8,6 +8,7 @@
 
 import type { CaseProgress, EvidenceProgress } from "./types";
 import type { Marks } from "./state";
+import { caseGaps, focus } from "./gaps";
 
 export type StepId =
   | "overview" | "documents" | "evidence"
@@ -156,21 +157,13 @@ const OPEN: StepState[] = ["todo", "attention"];
 /** The first step still open, in order; per evidence item for steps 4–7, the selected item
  * first. Optional steps and steps the examiner skipped are passed over. */
 export function nextStep(p: CaseProgress | null, marks: Marks, selected: string | null): NextStep | null {
-  if (!p) return null;
-  const open = (id: StepId, ev: EvidenceProgress | null) =>
-    !stepDef(id).optional && OPEN.includes(stepStatus(id, p, ev, marks).state);
-
-  for (const id of ["documents", "evidence"] as StepId[]) if (open(id, null)) return { step: id, evidenceId: null };
-  const items = [...p.evidence].sort((a, b) =>
-    a.evidence_id === selected ? -1 : b.evidence_id === selected ? 1 : a.evidence_id.localeCompare(b.evidence_id),
-  );
-  for (const ev of items) {
-    for (const id of ["identify", "parse", "time", "recover"] as StepId[]) {
-      if (open(id, ev)) return { step: id, evidenceId: ev.evidence_id };
-    }
-  }
-  for (const id of ["timeline", "export", "report"] as StepId[]) if (open(id, null)) return { step: id, evidenceId: null };
-  return null;
+  // Ranked by what each omission costs the report, not by position in a list. The old
+  // implementation scanned 1→11 and returned the first open step, which pointed an examiner
+  // back to step 2 on a case that was already parsed, timed and recovered. One source of
+  // truth now drives the rail's NEXT tag, the footer button and the readiness card, so the
+  // three can no longer disagree with each other.
+  void marks;
+  return focus(caseGaps(p), selected);
 }
 
 /** Another evidence item with steps 4–7 still open, for "examine the next item". */

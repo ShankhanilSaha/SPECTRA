@@ -107,13 +107,18 @@ export function StepNav(props: { step: StepId; children?: ReactNode }) {
           </Button>
         )}
         {next ? (
+          // Paging, not instruction. It stays secondary even when the step is complete: the
+          // primary action belongs to this screen's own work, and "what this case still
+          // needs" is answered by readiness on the Case screen — which is ranked by what
+          // each omission costs the report, not by position in the list. A primary-styled
+          // "Continue to <the next number>" competed with both and usually pointed backwards.
           <Button
-            kind={complete && !other ? "primary" : "secondary"}
+            kind="secondary"
             onClick={moveOn}
             disabled={nextStatus?.state === "locked"}
             title={nextStatus?.state === "locked" ? `${next.title}: ${nextStatus.summary}` : undefined}
           >
-            {skipping ? `${def.skipLabel} →` : `Continue to ${next.title} →`}
+            {skipping ? `${def.skipLabel} →` : `Next: ${next.title} →`}
           </Button>
         ) : (
           <Button kind={complete ? "primary" : "secondary"} onClick={() => go("overview")}>
